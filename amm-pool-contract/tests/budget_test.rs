@@ -1,7 +1,7 @@
 #![cfg(test)]
 
+use amm_pool_contract::{ExpensiveContract, ExpensiveContractClient};
 use budget_macros::budget_cpu_lt;
-use example_contract::{ExpensiveContract, ExpensiveContractClient};
 use soroban_sdk::Env;
 
 #[test]
@@ -26,7 +26,7 @@ fn test_budget_wasm() {
     let env = Env::default();
 
     // Path to the compiled wasm
-    let wasm_path = "../target/wasm32-unknown-unknown/release/example_contract.wasm";
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
@@ -48,7 +48,7 @@ fn test_budget_macro_gated() {
     let env = Env::default();
 
     // Path to the compiled wasm
-    let wasm_path = "../target/wasm32-unknown-unknown/release/example_contract.wasm";
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
@@ -66,7 +66,7 @@ fn test_budget_macro_deliberate_regression() {
     let env = Env::default();
 
     // Path to the compiled wasm
-    let wasm_path = "../target/wasm32-unknown-unknown/release/example_contract.wasm";
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
@@ -83,7 +83,7 @@ fn test_budget_macro_dynamic_env() {
     std::env::set_var("TEST_MAX_CPU", "950000");
     let env = Env::default();
 
-    let wasm_path = "../target/wasm32-unknown-unknown/release/example_contract.wasm";
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
@@ -100,7 +100,7 @@ fn test_budget_macro_dynamic_env_fallback() {
     std::env::remove_var("TEST_MAX_CPU_FALLBACK");
     let env = Env::default();
 
-    let wasm_path = "../target/wasm32-unknown-unknown/release/example_contract.wasm";
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
