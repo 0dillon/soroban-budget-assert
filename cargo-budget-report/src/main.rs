@@ -795,7 +795,7 @@ mod tests {
         });
         let result = extract_metrics(&rpc_json);
         assert!(result.is_err());
-        let err = format!("{:#}", result.unwrap_err());
+        let err = format!("{:#}", result.as_ref().unwrap_err());
         assert!(
             err.contains("Invalid Request"),
             "error should mention the RPC error message, got: {}",
