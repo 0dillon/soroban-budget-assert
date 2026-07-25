@@ -81,38 +81,30 @@ fn generate_limit_expr(limit: &BudgetLimit, metric_label: &str) -> proc_macro2::
     match limit {
         BudgetLimit::Int(n) => quote! { #n },
         BudgetLimit::EnvVar(var) => quote! {
-            match budget_env_resolve(#var) {
-                Some(s) => s.parse::<u64>().unwrap_or_else(|_| {
+            _budget_env_resolve(#var)
+                .map(|s| s.parse::<u64>().unwrap_or_else(|_| {
                     panic!(
                         "{}: env var {}={:?} is not a valid u64",
                         #metric_label,
                         #var,
                         s
                     )
-                }),
-                None => u64::MAX,
-            }
+                }))
+                .unwrap_or(u64::MAX)
         },
         BudgetLimit::Config(key) => quote! {
-            {
-                let path = std::path::Path::new("budget.json");
-                match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        #[allow(unused_parens)]
-                        match parse_config_value(&content, #key) {
-                            Some(v) => v,
-                            None => {
-                                panic!(
-                                    "{}: key '{}' not found or invalid in budget.json",
-                                    #metric_label,
-                                    #key,
-                                )
-                            }
-                        }
-                    }
-                    Err(_) => u64::MAX,
-                }
-            }
+            std::fs::read_to_string(std::path::Path::new("budget.json"))
+                .ok()
+                .map(|content| {
+                    _parse_config_value(&content, #key).unwrap_or_else(|| {
+                        panic!(
+                            "{}: key '{}' not found or invalid in budget.json",
+                            #metric_label,
+                            #key,
+                        )
+                    })
+                })
+                .unwrap_or(u64::MAX)
         },
     }
 }
@@ -166,13 +158,11 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
 
     let new_block = quote! {
         {
-            #[allow(unused_variables)]
-            let budget_env_resolve = |var: &str| -> Option<String> {
+            let _budget_env_resolve = |var: &str| -> Option<String> {
                 std::env::var(var).ok()
             };
 
-            #[allow(unused_variables)]
-            let parse_config_value = |content: &str, key: &str| -> Option<u64> {
+            let _parse_config_value = |content: &str, key: &str| -> Option<u64> {
                 let key_pattern = format!("\"{}\"", key);
                 let key_start = content.find(&key_pattern)?;
                 let after_key = &content[key_start + key_pattern.len()..];
@@ -203,6 +193,13 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
     })
 }
 
+/// Asserts that the CPU instructions used by `env` are less than N.
+/// Must be placed on a test function that has a local `env` variable.
+///
+/// This checks a *local* estimate. Real network cost can differ from it
+/// significantly in either direction depending on the build profile — see
+/// `docs/src/mechanics.md` for measurements. Use `cargo budget-report` for
+/// network ground truth.
 #[proc_macro_attribute]
 pub fn budget_cpu_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {
@@ -219,6 +216,13 @@ pub fn budget_cpu_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     )
 }
 
+/// Asserts that the memory bytes used by `env` are less than N.
+/// Must be placed on a test function that has a local `env` variable.
+///
+/// This checks a *local* estimate. Real network cost can differ from it
+/// significantly in either direction depending on the build profile — see
+/// `docs/src/mechanics.md` for measurements. Use `cargo budget-report` for
+/// network ground truth.
 #[proc_macro_attribute]
 pub fn budget_mem_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {
@@ -235,6 +239,15 @@ pub fn budget_mem_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     )
 }
 
+/// Asserts that the CPU and/or memory bytes used by `env` are less than specified limits.
+/// Must be placed on a test function that has a local `env` variable.
+///
+/// Limits can be specified as `cpu = N` and `mem = M`.
+///
+/// This checks a *local* estimate. Real network cost can differ from it
+/// significantly in either direction depending on the build profile — see
+/// `docs/src/mechanics.md` for measurements. Use `cargo budget-report` for
+/// network ground truth.
 #[proc_macro_attribute]
 pub fn budget_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let spec = match syn::parse2::<BudgetSpec>(attr.into()) {
