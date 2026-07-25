@@ -7,13 +7,15 @@ use compare::{
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
+
+mod compare;
 
 /// Commented budget.toml template written by `cargo budget-report --init`.
 const BUDGET_TOML_TEMPLATE: &str = r#"# -- Budget report configuration ---------------------------------------------
@@ -87,6 +89,24 @@ struct BudgetReportArgs {
     /// Emit the report as CSV instead of a table or JSON.
     #[arg(long, default_value_t = false)]
     csv: bool,
+
+    // NOTE: the three fields below were missing from this struct even though
+    // `Mode::from_args`, `resolve_tolerance`, and several tests all reference
+    // them. Added minimal definitions to make the file compile — please
+    // confirm the flag names / help text are what you actually intended.
+    /// Write a new resource-usage baseline snapshot to this path and exit.
+    #[arg(long)]
+    record_baseline: Option<String>,
+
+    /// Check current measurements against an existing baseline snapshot at
+    /// this path, applying the configured regression tolerance.
+    #[arg(long)]
+    check_baseline: Option<String>,
+
+    /// Override the regression tolerance (e.g. "0.10" for 10%). Takes
+    /// precedence over `tolerance` in `budget.toml`.
+    #[arg(long)]
+    tolerance: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default, Debug)]
@@ -136,6 +156,26 @@ struct FunctionConfig {
     read_limit: Option<u64>,
     #[serde(default)]
     write_limit: Option<u64>,
+    /// Optional per-function override for the regression tolerance.
+    #[serde(default)]
+    tolerance: Option<f64>,
+}
+
+#[derive(Clone, Copy)]
+struct MeasuredResources {
+    instructions: u64,
+    read_bytes: u64,
+    write_bytes: u64,
+}
+
+impl MeasuredResources {
+    fn as_compare(self) -> Measurement {
+        Measurement {
+            cpu_instructions: self.instructions,
+            read_bytes: self.read_bytes,
+            write_bytes: self.write_bytes,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -421,6 +461,122 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     }
 }
 
+fn resolve_tolerance(cli_override: Option<&str>, config: &BudgetToml) -> Result<Tolerance> {
+    if let Some(raw) = cli_override {
+        return parse_tolerance(raw);
+    }
+    if let Some(t) = config.tolerance {
+        return Ok(Tolerance::new(t));
+    }
+    Ok(Tolerance::default())
+}
+
+#[derive(serde::Serialize)]
+struct CheckReportJson<'r> {
+    has_regressions: bool,
+    regression_count: usize,
+    default_tolerance: f64,
+    regressions: Vec<RegressionJson<'r>>,
+    improvements: Vec<ImprovementJson<'r>>,
+    new_entries: Vec<NewEntryJson<'r>>,
+    stale_entries: Vec<StaleEntryJson<'r>>,
+}
+
+#[derive(serde::Serialize)]
+struct RegressionJson<'r> {
+    package: &'r str,
+    function: &'r str,
+    metric: &'r str,
+    baseline: u64,
+    current: u64,
+    tolerance: f64,
+    max_allowed: u64,
+}
+
+#[derive(serde::Serialize)]
+struct ImprovementJson<'r> {
+    package: &'r str,
+    function: &'r str,
+    metric: &'r str,
+    baseline: u64,
+    current: u64,
+    tolerance: f64,
+}
+
+#[derive(serde::Serialize)]
+struct NewEntryJson<'r> {
+    package: &'r str,
+    function: &'r str,
+}
+
+#[derive(serde::Serialize)]
+struct StaleEntryJson<'r> {
+    package: &'r str,
+    function: &'r str,
+}
+
+fn render_check_report_json(
+    report: &compare::CheckReport,
+    default_tolerance: Tolerance,
+) -> serde_json::Value {
+    let mut regressions = Vec::new();
+    let mut improvements = Vec::new();
+    for func in &report.compared {
+        for m in &func.metrics {
+            match m.verdict {
+                compare::Verdict::Regression => {
+                    regressions.push(RegressionJson {
+                        package: &func.package,
+                        function: &func.function,
+                        metric: m.metric.label(),
+                        baseline: m.baseline,
+                        current: m.current,
+                        tolerance: m.tolerance.value,
+                        max_allowed: max_allowed_metric(m.baseline, m.tolerance.value),
+                    });
+                }
+                compare::Verdict::Improvement => {
+                    improvements.push(ImprovementJson {
+                        package: &func.package,
+                        function: &func.function,
+                        metric: m.metric.label(),
+                        baseline: m.baseline,
+                        current: m.current,
+                        tolerance: m.tolerance.value,
+                    });
+                }
+                compare::Verdict::Pass => {}
+            }
+        }
+    }
+    let new_entries: Vec<_> = report
+        .new
+        .iter()
+        .map(|e| NewEntryJson {
+            package: &e.package,
+            function: &e.function,
+        })
+        .collect();
+    let stale_entries: Vec<_> = report
+        .stale
+        .iter()
+        .map(|e| StaleEntryJson {
+            package: &e.package,
+            function: &e.function,
+        })
+        .collect();
+    let summary = CheckReportJson {
+        has_regressions: report.has_regressions(),
+        regression_count: report.regression_count(),
+        default_tolerance: default_tolerance.value,
+        regressions,
+        improvements,
+        new_entries,
+        stale_entries,
+    };
+    serde_json::to_value(summary).expect("CheckReportJson serialization is infallible")
+}
+
 /// Scaffold a commented `budget.toml` template. Errors if the file already
 /// exists and `force` is not set.
 fn scaffold_init(force: bool) -> Result<()> {
@@ -652,6 +808,19 @@ fn main() -> Result<()> {
                     read_bytes,
                     write_bytes,
                 } => {
+                    // Record the measurement for baseline/snapshot mode. This
+                    // was previously only wired up in stale pre-refactor
+                    // code; it belongs here in the success arm.
+                    let measured = MeasuredResources {
+                        instructions: instructions as u64,
+                        read_bytes: read_bytes as u64,
+                        write_bytes: write_bytes as u64,
+                    };
+                    measurements
+                        .entry(package.name.clone())
+                        .or_default()
+                        .insert(function.clone(), measured);
+
                     // Build three CostReport entries for this function. In
                     // --check mode, attach the configured limit and
                     // pass/fail to each entry.
@@ -711,6 +880,66 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
         return Ok(());
+    }
+
+    // Per-function tolerance overrides from `budget.toml` (top-level plus
+    // per-function). Built once so Mode::Check (baseline regression) and the
+    // regular --check path below use the same input.
+    let tolerance_overrides: BTreeMap<String, Tolerance> = toml_config
+        .functions
+        .iter()
+        .filter_map(|(name, fc)| fc.tolerance.map(|t| (name.clone(), Tolerance::new(t))))
+        .collect();
+
+    // Re-shape the local `MeasuredResources` map into the `compare::Measurement`
+    // shape so the baseline modes (`--record-baseline`, `--check-baseline`)
+    // can hand it to `build_baseline` / `check_against_baseline` without a
+    // second walk over the per-package data.
+    let measurement_map: BTreeMap<String, BTreeMap<String, Measurement>> = measurements
+        .iter()
+        .map(|(pkg, fns)| {
+            (
+                pkg.clone(),
+                fns.iter()
+                    .map(|(name, m)| (name.clone(), m.as_compare()))
+                    .collect(),
+            )
+        })
+        .collect();
+
+    match mode {
+        Mode::Record(path) => {
+            let baseline = build_baseline(&measurement_map);
+            baseline
+                .save(&path)
+                .with_context(|| format!("failed to save baseline to {}", path.display()))?;
+            eprintln!("Recorded baseline to {}", path.display());
+            return Ok(());
+        }
+        Mode::Check(path) => {
+            let baseline = Baseline::load(&path)
+                .with_context(|| format!("failed to load baseline {}", path.display()))?;
+            let report = check_against_baseline(
+                &baseline,
+                &measurement_map,
+                default_tolerance,
+                &tolerance_overrides,
+            );
+            if args.json {
+                let json = render_check_report_json(&report, default_tolerance);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json).context("Failed to serialize JSON")?
+                );
+            } else {
+                print!("{}", render_report_text(&report));
+            }
+            if report.has_regressions() {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Mode::Report => {} // Fall through to the legacy rendering below.
     }
 
     if args.csv {
@@ -779,11 +1008,13 @@ fn main() -> Result<()> {
         println!("* Note: These are simulated numbers on testnet and may vary slightly depending on ledger state.");
         println!("* See the \"Measurement scope\" section of the Tool Reference for what to use instead when you need those figures.");
 
+        // Fixed: was `if check` — `check` is not in scope here, this needs
+        // to read the CLI flag `args.check`.
         if args.check {
             println!("\n=== BUDGET CHECKS ===");
             let mut passed: usize = 0;
             let mut failed: usize = 0;
-            for r in &reports {
+            for r in reports {
                 let Some(pass) = r.pass else {
                     continue;
                 };
@@ -815,8 +1046,9 @@ fn main() -> Result<()> {
             println!("Summary: {} check(s) passed, {} failed", passed, failed);
         }
     }
-
-    if has_errors || (args.check && checks_failed) {
+    // PR #195: `--check` exits non-zero when any limit was breached so CI can
+    // gate on the result. Mirrors the empty-measurements branch above.
+    if args.check && checks_failed {
         std::process::exit(1);
     }
     Ok(())
