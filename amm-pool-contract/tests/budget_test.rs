@@ -269,6 +269,38 @@ fn test_budget_macro_dynamic_env_fallback() {
 }
 
 // ---------------------------------------------------------------------------
+// Environment variable with default value tests
+// ---------------------------------------------------------------------------
+
+#[test]
+#[budget_cpu_lt(env = "TEST_UNSET_VAR_DEFAULT:3000000")]
+fn test_budget_macro_env_default_when_unset() {
+    // TEST_UNSET_VAR_DEFAULT is not set, so the macro should use the default 3000000.
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(env = "TEST_UNSET_VAR_DEFAULT_TIGHT:1000")]
+fn test_budget_macro_env_default_when_unset_tight() {
+    // TEST_UNSET_VAR_DEFAULT_TIGHT is not set, so the macro should use the default 1000.
+    // This is intentionally too low to pass, verifying the default is enforced.
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+// ---------------------------------------------------------------------------
 // JSON config tests
 // ---------------------------------------------------------------------------
 
