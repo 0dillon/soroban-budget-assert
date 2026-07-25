@@ -75,6 +75,7 @@ fn test_budget_raw_rust() {
 }
 
 #[test]
+#[budget_cpu_lt(5000000)]
 fn test_budget_wasm() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -82,11 +83,78 @@ fn test_budget_wasm() {
     client.deposit(&user, &10_000_i128, &10_000_i128);
     client.swap(&user, &true, &100_i128, &90_i128);
     client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
 
-    let budget = env.cost_estimate().budget();
-    println!("=== WASM LOCAL ===");
-    println!("CPU instructions: {}", budget.cpu_instruction_cost());
-    println!("Memory bytes: {}", budget.memory_bytes_cost());
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_deposit() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_swap() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_withdraw() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_isolated() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[budget_mem_lt(2000000)]
+fn test_budget_require_auth_isolated_mem() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1000)] // Deliberate regression: require_auth costs well above 1K CPU
+fn test_budget_require_auth_deliberate_regression_cpu() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_mem_lt(1)] // Deliberate regression: any real memory cost exceeds an impossible 1-byte limit
+fn test_budget_require_auth_deliberate_regression_mem() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
 }
 
 #[test]
