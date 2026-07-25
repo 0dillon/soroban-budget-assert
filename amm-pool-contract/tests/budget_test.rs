@@ -158,6 +158,48 @@ fn test_budget_require_auth_deliberate_regression_mem() {
 }
 
 #[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_extend_ttl_isolated() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.extend_instance_ttl(&100, &10_000);
+}
+
+#[test]
+#[budget_mem_lt(2000000)]
+fn test_budget_extend_ttl_isolated_mem() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.extend_instance_ttl(&100, &10_000);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1000)] // Deliberate regression: extend_ttl costs well above 1K CPU
+fn test_budget_extend_ttl_deliberate_regression_cpu() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.extend_instance_ttl(&100, &10_000);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_mem_lt(1)] // Deliberate regression: any real memory cost exceeds an impossible 1-byte limit
+fn test_budget_extend_ttl_deliberate_regression_mem() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.extend_instance_ttl(&100, &10_000);
+}
+
+#[test]
 #[budget_cpu_lt(2500000)]
 fn test_budget_macro_gated() {
     let env = Env::default();
