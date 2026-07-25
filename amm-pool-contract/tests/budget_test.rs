@@ -191,7 +191,7 @@ fn test_budget_mem_fails_when_exceeded() {
 }
 
 #[test]
-#[budget_cpu_lt(u64::MAX)]
+#[budget_cpu_lt(18_446_744_073_709_551_615)]
 fn test_budget_cpu_passes_when_under_limit() {
     let env = Env::default();
     let contract_id = env.register(ConstantProductPool, ());
@@ -202,7 +202,7 @@ fn test_budget_cpu_passes_when_under_limit() {
 }
 
 #[test]
-#[budget_mem_lt(u64::MAX)]
+#[budget_mem_lt(18_446_744_073_709_551_615)]
 fn test_budget_mem_passes_when_under_limit() {
     let env = Env::default();
     let contract_id = env.register(ConstantProductPool, ());

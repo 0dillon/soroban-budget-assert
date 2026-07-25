@@ -174,17 +174,13 @@ impl ConstantProductPool {
         for i in 0..n.min(200) {
             vec.push_back(i);
         }
-        env.storage()
-            .instance()
-            .set(&symbol_short!("burn"), &vec);
+        env.storage().instance().set(&symbol_short!("burn"), &vec);
 
         let mut vec2 = Vec::new(&env);
         for i in 0..n.min(200) {
             vec2.push_back(i.wrapping_mul(i));
         }
-        env.storage()
-            .instance()
-            .set(&symbol_short!("brn2"), &vec2);
+        env.storage().instance().set(&symbol_short!("brn2"), &vec2);
 
         acc
     }
