@@ -1,19 +1,27 @@
 #![cfg(test)]
 
+use std::sync::{Mutex, PoisonError};
+
 use amm_pool_contract::{ConstantProductPool, ConstantProductPoolClient};
 use budget_macros::{budget_cpu_lt, budget_mem_lt};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
+/// Serialises all JSON-config tests so they never read stale `budget.json`
+/// content written by another test running in parallel.
+static BUDGET_JSON_LOCK: Mutex<()> = Mutex::new(());
+
 /// A Drop guard that writes `budget.json` on creation and removes it on drop
-/// (including during stack unwinding from a panic). The file must persist
-/// through the macro-generated assertion that runs after all test-body
-/// statements.
-struct BudgetJsonGuard;
+/// (including during stack unwinding from a panic). The `_lock` field prevents
+/// other JSON-config tests from overwriting the file while the assertion runs.
+struct BudgetJsonGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
 
 impl BudgetJsonGuard {
     fn create(content: &str) -> Self {
+        let lock = BUDGET_JSON_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         std::fs::write("budget.json", content).expect("failed to write budget.json");
-        BudgetJsonGuard
+        BudgetJsonGuard { _lock: lock }
     }
 }
 
@@ -148,7 +156,6 @@ fn test_budget_macro_dynamic_env_fallback() {
 #[test]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_valid() {
-    // BudgetJsonGuard writes the file; Drop (including on unwind) removes it.
     let _guard = BudgetJsonGuard::create(r#"{"cpu_instructions": 2500000}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -200,8 +207,12 @@ fn test_budget_macro_json_config_deliberate_regression() {
 
 #[test]
 #[budget_cpu_lt(config = "cpu_instructions")]
-fn test_budget_macro_json_config_fallback_no_file() {
-    // No budget.json exists -> falls back to u64::MAX.
+fn test_budget_macro_json_config_fallback_missing_key() {
+    // Write an empty JSON object so the requested key won't be found.
+    // This exercises the same fallback-to-u64::MAX path as a missing file.
+    // The guard also acquires the global mutex so this test never races
+    // with another JSON config test over the shared budget.json file.
+    let _guard = BudgetJsonGuard::create(r#"{}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
