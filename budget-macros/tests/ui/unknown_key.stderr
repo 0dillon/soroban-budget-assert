@@ -1,0 +1,5 @@
+error: unknown key, expected `cpu`, `mem`, or `env_ident`
+ --> tests/ui/unknown_key.rs:3:13
+  |
+3 | #[budget_lt(gpu = 100)]
+  |             ^^^

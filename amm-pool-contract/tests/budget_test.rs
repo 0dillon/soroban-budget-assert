@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use amm_pool_contract::{ConstantProductPool, ConstantProductPoolClient};
-use budget_macros::{budget_cpu_lt, budget_mem_lt};
+use budget_macros::{budget_cpu_lt, budget_lt, budget_mem_lt};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup_wasm(env: &Env) -> (ConstantProductPoolClient<'_>, Address) {
@@ -116,6 +116,37 @@ fn test_budget_macro_dynamic_env_fallback() {
     let budget_env_resolve = |_var: &str| -> Option<String> { None };
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+#[test]
+#[budget_lt(cpu = 2500000, mem = 5000000)]
+fn test_budget_lt_combined() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+#[test]
+#[budget_lt(cpu = env("TEST_MAX_CPU"), mem = env("TEST_MAX_MEM"), env_ident = test_env)]
+fn test_budget_lt_dynamic_custom_env() {
+    let budget_env_resolve = |var: &str| -> Option<String> {
+        if var == "TEST_MAX_CPU" {
+            Some("2500000".to_string())
+        } else if var == "TEST_MAX_MEM" {
+            Some("5000000".to_string())
+        } else {
+            None
+        }
+    };
+    let test_env = Env::default();
+    let (client, user) = setup_wasm(&test_env);
 
     client.deposit(&user, &10_000_i128, &10_000_i128);
     client.swap(&user, &true, &100_i128, &90_i128);
