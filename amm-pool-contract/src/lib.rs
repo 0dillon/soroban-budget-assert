@@ -144,6 +144,20 @@ impl ConstantProductPool {
         (amount_a, amount_b)
     }
 
+    pub fn require_auth_only(_env: Env, addr: Address) {
+        addr.require_auth();
+    }
+
+    /// Extends the TTL of this contract's instance storage (and its Wasm
+    /// code) so neither is evicted from the ledger before `extend_to`
+    /// ledgers from now, provided the current TTL is below `threshold`
+    /// ledgers. Touches no pool state; isolated purely so its cost can be
+    /// measured/asserted on its own, the same way `require_auth_only`
+    /// isolates `require_auth`.
+    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
     pub fn do_expensive_work(env: Env, n: u32) -> u32 {
         let mut result: u32 = 0;
 
