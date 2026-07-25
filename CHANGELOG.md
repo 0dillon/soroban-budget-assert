@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Single-page landing site under `site/` with empirical cost-gap breakdown, two-tier architecture overview, quick-start guide, asciinema demo embed, and project resources.
 - Updated GitHub Actions Pages deployment workflow to serve static site files from `./site`.
 - Budget macros now support reading thresholds from a `budget.json` config file via the `config = "key"` attribute syntax, e.g. `#[budget_cpu_lt(config = "cpu_instructions")]`. Falls back to `u64::MAX` when the file is missing or the key is not found.
+- Comprehensive unit tests for the cost-value formatter covering zero, single digits, thousands/millions boundaries, and `u32::MAX` across both unit suffixes.
 - Contributors should add a short changelog entry with their pull request when the change is user-visible.
+- Budget assertion tests for `require_auth` host calls: isolated `require_auth_only` contract function with CPU/memory budget assertions, plus per-operation deposit/swap/withdraw granular budget checks.
 
 ### Fixed
 

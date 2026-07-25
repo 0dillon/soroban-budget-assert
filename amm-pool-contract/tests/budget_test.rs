@@ -20,6 +20,9 @@ struct BudgetJsonGuard {
 impl BudgetJsonGuard {
     fn create(content: &str) -> Self {
         let lock = BUDGET_JSON_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let lock = BUDGET_JSON_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         std::fs::write("budget.json", content).expect("failed to write budget.json");
         BudgetJsonGuard { _lock: lock }
     }
@@ -34,6 +37,13 @@ impl Drop for BudgetJsonGuard {
 fn setup_wasm(env: &Env) -> (ConstantProductPoolClient<'_>, Address) {
     let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
     let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
+    // AUDIT (Issue #92): `soroban_sdk::Env::register_contract_wasm` is deprecated in soroban-sdk 22.x
+    // in favor of `Env::register`. However, `Env::register` only registers Rust contract types for
+    // in-memory host execution, whereas `register_contract_wasm` remains the sole API in soroban-sdk 22.x
+    // for registering raw precompiled `.wasm` byte slices into the test environment VM. Because WASM-level
+    // execution is required for accurate CPU/memory budget measurements (raw Rust estimates undercount costs),
+    // `register_contract_wasm` with `#[allow(deprecated)]` remains necessary until soroban-sdk provides
+    // a non-deprecated replacement for raw WASM byte registration.
     #[allow(deprecated)]
     let contract_id = env.register_contract_wasm(None, wasm.as_slice());
     let client = ConstantProductPoolClient::new(env, &contract_id);
@@ -66,6 +76,7 @@ fn test_budget_raw_rust() {
 }
 
 #[test]
+#[budget_cpu_lt(5000000)]
 fn test_budget_wasm() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -73,11 +84,78 @@ fn test_budget_wasm() {
     client.deposit(&user, &10_000_i128, &10_000_i128);
     client.swap(&user, &true, &100_i128, &90_i128);
     client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
 
-    let budget = env.cost_estimate().budget();
-    println!("=== WASM LOCAL ===");
-    println!("CPU instructions: {}", budget.cpu_instruction_cost());
-    println!("Memory bytes: {}", budget.memory_bytes_cost());
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_deposit() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_swap() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_withdraw() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_require_auth_isolated() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[budget_mem_lt(2000000)]
+fn test_budget_require_auth_isolated_mem() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1000)] // Deliberate regression: require_auth costs well above 1K CPU
+fn test_budget_require_auth_deliberate_regression_cpu() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_mem_lt(1)] // Deliberate regression: any real memory cost exceeds an impossible 1-byte limit
+fn test_budget_require_auth_deliberate_regression_mem() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.require_auth_only(&user);
 }
 
 #[test]
@@ -181,6 +259,7 @@ fn test_budget_macro_json_config_mem_valid() {
 #[should_panic(
     expected = "key 'non_existent_key' not found or invalid in budget.json"
 )]
+#[should_panic(expected = "key 'non_existent_key' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "non_existent_key")]
 fn test_budget_macro_json_config_missing_key() {
     let _guard = BudgetJsonGuard::create(r#"{"some_other_key": 100}"#);
@@ -211,6 +290,7 @@ fn test_budget_macro_json_config_deliberate_regression() {
 #[should_panic(
     expected = "key 'cpu_instructions' not found or invalid in budget.json"
 )]
+#[should_panic(expected = "key 'cpu_instructions' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_missing_key_empty_config() {
     // Empty JSON object -> requested key won't be found -> macro panics.
@@ -227,6 +307,7 @@ fn test_budget_macro_json_config_missing_key_empty_config() {
 #[should_panic(
     expected = "key 'cpu_instructions' not found or invalid in budget.json"
 )]
+#[should_panic(expected = "key 'cpu_instructions' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_invalid_json() {
     let _guard = BudgetJsonGuard::create(r#"this is not valid json at all"#);
@@ -236,4 +317,63 @@ fn test_budget_macro_json_config_invalid_json() {
     client.deposit(&user, &10_000_i128, &10_000_i128);
     client.swap(&user, &true, &100_i128, &90_i128);
     client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+}
+
+/// Fixture: contract invocation stays within the read bytes budget.
+///
+/// Runs a deposit + swap + withdraw cycle against the WASM contract and
+/// asserts that the ledger read bytes reported by
+/// `env.cost_estimate().resources().read_bytes` do not exceed a generous
+/// upper bound.  This test is expected to pass under normal conditions and
+/// acts as a regression guard that will fail if storage reads grow
+/// unexpectedly.
+#[test]
+fn test_read_bytes_budget_within_limit() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+
+    let read_bytes = env.cost_estimate().resources().read_bytes;
+    println!("Read bytes (WASM deposit+swap+withdraw): {read_bytes}");
+
+    // Generous upper bound (measured ~16,252 on CI) — tighten once a clean baseline is recorded.
+    assert!(
+        read_bytes < 20_000,
+        "Read bytes {read_bytes} exceeded the expected limit of 20,000 \
+         - local estimate, real network cost may differ significantly in either direction"
+    );
+}
+
+/// Fixture: deliberate regression — contract exceeds the read bytes budget.
+///
+/// Sets an impossibly tight read bytes limit (1 byte) to demonstrate what a
+/// read-bytes budget breach looks like.  The `#[should_panic]` attribute
+/// documents the expected failure message so that the test suite treats this
+/// as a passing regression fixture rather than a real failure.
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+fn test_read_bytes_budget_exceeds_limit() {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    client.deposit(&user, &10_000_i128, &10_000_i128);
+    client.swap(&user, &true, &100_i128, &90_i128);
+    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+
+    let read_bytes = env.cost_estimate().resources().read_bytes;
+    println!("Read bytes (deliberate regression): {read_bytes}");
+
+    // Deliberately impossible limit: any real WASM invocation will read more
+    // than 1 byte from ledger storage, so this assertion always fires.
+    let limit: u32 = 1;
+    assert!(
+        read_bytes < limit,
+        "Read bytes {read_bytes} exceeded the expected limit of {limit} \
+         - local estimate, real network cost may differ significantly in either direction"
+    );
 }
