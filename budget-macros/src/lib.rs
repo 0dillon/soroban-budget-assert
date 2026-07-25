@@ -8,26 +8,28 @@ use syn::{parse::Parse, parse::ParseStream, Ident, ItemFn, LitInt, LitStr, Token
 enum BudgetLimit {
     Int(u64),
     EnvVar(String),
+    Config(String),
+    // TODO: Add support for parsing a default value if the env var is missing
+}
+
+enum BudgetMetric {
+    CpuInstructionCost,
+    MemoryBytesCost,
 }
 
 impl Parse for BudgetLimit {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Ident) {
             let ident: Ident = input.parse()?;
-            if ident != "env" {
-                return Err(syn::Error::new(ident.span(), "expected `env`"));
-            }
-            if input.peek(syn::token::Paren) {
-                // env("VAR")
-                let content;
-                syn::parenthesized!(content in input);
-                let lit: LitStr = content.parse()?;
-                Ok(BudgetLimit::EnvVar(lit.value()))
-            } else {
-                // env = "VAR"
-                input.parse::<Token![=]>()?;
-                let lit: LitStr = input.parse()?;
-                Ok(BudgetLimit::EnvVar(lit.value()))
+            input.parse::<Token![=]>()?;
+            let lit: LitStr = input.parse()?;
+            match ident.to_string().as_str() {
+                "env" => Ok(BudgetLimit::EnvVar(lit.value())),
+                "config" => Ok(BudgetLimit::Config(lit.value())),
+                other => Err(syn::Error::new(
+                    ident.span(),
+                    format!("expected `env` or `config`, got `{}`", other),
+                )),
             }
         } else {
             let lit: LitInt = input.parse()?;
@@ -71,6 +73,27 @@ impl Parse for BudgetSpec {
                 None => u64::MAX,
             }
         },
+        BudgetLimit::Config(key) => quote! {
+            {
+                let path = std::path::Path::new("budget.json");
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        #[allow(unused_parens)]
+                        match parse_config_value(&content, #key) {
+                            Some(v) => v,
+                            None => {
+                                panic!(
+                                    "{}: key '{}' not found or invalid in budget.json",
+                                    #metric_label,
+                                    #key,
+                                )
+                            }
+                        }
+                    }
+                    Err(_) => u64::MAX,
+                }
+            }
+        },
     };
 
             if !input.is_empty() {
@@ -97,36 +120,25 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
 
     let stmts = &input_fn.block.stmts;
 
-    let env_ident = spec
-        .env_ident
-        .unwrap_or_else(|| proc_macro2::Ident::new("env", proc_macro2::Span::call_site()));
+            #[allow(unused_variables)]
+            let parse_config_value = |content: &str, key: &str| -> Option<u64> {
+                let key_pattern = format!("\"{}\"", key);
+                let key_start = content.find(&key_pattern)?;
+                let after_key = &content[key_start + key_pattern.len()..];
+                let colon_pos = after_key.find(':')?;
+                let after_colon = after_key[colon_pos + 1..].trim();
+                let num_end = after_colon
+                    .find(|c: char| !c.is_ascii_digit() && c != ',' && c != '}')
+                    .unwrap_or(after_colon.len());
+                let num_str = after_colon[..num_end]
+                    .trim()
+                    .trim_end_matches(',')
+                    .trim_end_matches('}')
+                    .trim_matches('"');
+                num_str.parse().ok()
+            };
 
-    let mut asserts = Vec::new();
-
-    if let Some(limit) = spec.cpu {
-        let limit_expr = match limit {
-            BudgetLimit::Int(n) => quote! { #n },
-            BudgetLimit::EnvVar(var) => quote! {
-                budget_env_resolve(#var)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(u64::MAX)
-            },
-        };
-        let cost_ident = proc_macro2::Ident::new("cpu_cost", proc_macro2::Span::call_site());
-        let cost_expr = quote! { budget.cpu_instruction_cost() };
-        let assert_msg = "CPU instruction cost {} exceeded limit {} - local estimate, real network cost may differ significantly in either direction";
-
-        asserts.push(quote! {
-            let #cost_ident = #cost_expr;
-            let limit_u64: u64 = #limit_expr;
-            assert!(
-                #cost_ident < limit_u64,
-                #assert_msg,
-                #cost_ident,
-                limit_u64
-            );
-        });
-    }
+            #(#stmts)*
 
     if let Some(limit) = spec.mem {
         let limit_expr = match limit {

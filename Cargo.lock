@@ -334,7 +334,8 @@ dependencies = [
  "serde_json",
  "stellar-xdr",
  "tabled",
- "toml 0.8.23",
+ "tempfile",
+ "toml",
  "wasmparser",
 ]
 
