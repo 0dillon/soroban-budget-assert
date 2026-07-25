@@ -5,7 +5,9 @@ use budget_macros::{budget_cpu_lt, budget_mem_lt};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 /// A Drop guard that writes `budget.json` on creation and removes it on drop
-/// (including during stack unwinding from a panic).
+/// (including during stack unwinding from a panic). The file must persist
+/// through the macro-generated assertion that runs after all test-body
+/// statements.
 struct BudgetJsonGuard;
 
 impl BudgetJsonGuard {
@@ -71,7 +73,7 @@ fn test_budget_wasm() {
 }
 
 #[test]
-#[budget_cpu_lt(2500000)] // Re-measured: WASM local 2307555, simulates deposit+swap+withdraw
+#[budget_cpu_lt(2500000)]
 fn test_budget_macro_gated() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -85,7 +87,7 @@ fn test_budget_macro_gated() {
 #[should_panic(
     expected = "local estimate, real network cost may differ significantly in either direction"
 )]
-#[budget_cpu_lt(1000000)] // Deliberate regression: AMM pool costs ~2.3M CPU
+#[budget_cpu_lt(1000000)]
 fn test_budget_macro_deliberate_regression() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -99,7 +101,7 @@ fn test_budget_macro_deliberate_regression() {
 #[should_panic(
     expected = "local estimate, real network cost may differ significantly in either direction"
 )]
-#[budget_mem_lt(1)] // Deliberate regression: any real memory cost exceeds an impossible 1-byte limit
+#[budget_mem_lt(1)]
 fn test_budget_macro_mem_deliberate_regression() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -146,11 +148,7 @@ fn test_budget_macro_dynamic_env_fallback() {
 #[test]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_valid() {
-    // The BudgetJsonGuard writes budget.json before the test body runs.
-    // The macro assertion runs AFTER all statements in the test body, but
-    // the guard's Drop (which removes the file) runs when the scope exits
-    // — which is after the assertion. Additionally, Drop runs during stack
-    // unwinding if the assertion panics, ensuring cleanup.
+    // BudgetJsonGuard writes the file; Drop (including on unwind) removes it.
     let _guard = BudgetJsonGuard::create(r#"{"cpu_instructions": 2500000}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -175,8 +173,7 @@ fn test_budget_macro_json_config_mem_valid() {
 #[test]
 #[budget_cpu_lt(config = "non_existent_key")]
 fn test_budget_macro_json_config_missing_key() {
-    // A valid json file but without the requested key should fall back to
-    // u64::MAX and allow the assertion to pass.
+    // Valid JSON but missing the requested key -> falls back to u64::MAX.
     let _guard = BudgetJsonGuard::create(r#"{"some_other_key": 100}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -192,9 +189,9 @@ fn test_budget_macro_json_config_missing_key() {
 )]
 #[budget_cpu_lt(config = "cpu_instructions_deliberate")]
 fn test_budget_macro_json_config_deliberate_regression() {
-    // A deliberately low threshold in the config file should trigger a panic
-    // just like the hard-coded regression test.
-    let _guard = BudgetJsonGuard::create(r#"{"cpu_instructions_deliberate": 1}"#);
+    let _guard = BudgetJsonGuard::create(
+        "{\"cpu_instructions_deliberate\": 1}",
+    );
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
@@ -206,8 +203,7 @@ fn test_budget_macro_json_config_deliberate_regression() {
 #[test]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_fallback_no_file() {
-    // When no budget.json exists at all, the macro falls back to u64::MAX
-    // and the assertion passes.
+    // No budget.json exists -> falls back to u64::MAX.
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
@@ -219,9 +215,8 @@ fn test_budget_macro_json_config_fallback_no_file() {
 #[test]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_invalid_json() {
-    // Malformed JSON content should cause parse_config_value to return None,
-    // falling back to u64::MAX so the assertion passes.
-    let _guard = BudgetJsonGuard::create("this is not valid json at all");
+    // Malformed JSON content -> parse_config_value returns None -> u64::MAX.
+    let _guard = BudgetJsonGuard::create(r#"this is not valid json at all"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
