@@ -202,6 +202,8 @@ fn test_budget_macro_dynamic_env() {
     let budget_env_resolve = |var: &str| -> Option<String> {
         if var == "TEST_MAX_CPU" {
             Some("2500000".to_string())
+        } else if var == "TEST_MAX_MEM" {
+            Some("50000000".to_string())
         } else {
             None
         }
