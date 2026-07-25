@@ -1,0 +1,5 @@
+error: duplicate key `cpu`
+ --> tests/ui/duplicate_key.rs:3:24
+  |
+3 | #[budget_lt(cpu = 100, cpu = 200)]
+  |                        ^^^
