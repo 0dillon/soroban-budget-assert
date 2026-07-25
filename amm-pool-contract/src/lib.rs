@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, symbol_short, vec, Address, Env, Val, Vec, Symbol};
+use soroban_sdk::{contract, contractimpl, symbol_short, vec, Address, Env, Symbol, Val, Vec};
 
 const RESERVE_A: Symbol = symbol_short!("resA");
 const RESERVE_B: Symbol = symbol_short!("resB");
