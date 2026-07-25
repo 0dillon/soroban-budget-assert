@@ -965,6 +965,9 @@ fn main() -> Result<()> {
 }
 
 #[cfg(test)]
+mod module_8;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
