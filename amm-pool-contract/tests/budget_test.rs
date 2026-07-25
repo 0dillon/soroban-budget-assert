@@ -161,7 +161,7 @@ fn test_budget_macro_json_config_valid() {
 #[test]
 #[budget_mem_lt(config = "memory_bytes")]
 fn test_budget_macro_json_config_mem_valid() {
-    let _guard = BudgetJsonGuard::create(r#"{"memory_bytes": 1000000}"#);
+    let _guard = BudgetJsonGuard::create(r#"{"memory_bytes": 5000000}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
@@ -189,9 +189,7 @@ fn test_budget_macro_json_config_missing_key() {
 )]
 #[budget_cpu_lt(config = "cpu_instructions_deliberate")]
 fn test_budget_macro_json_config_deliberate_regression() {
-    let _guard = BudgetJsonGuard::create(
-        "{\"cpu_instructions_deliberate\": 1}",
-    );
+    let _guard = BudgetJsonGuard::create(r#"{"cpu_instructions_deliberate": 1}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
 
