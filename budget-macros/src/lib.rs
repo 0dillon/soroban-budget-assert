@@ -43,10 +43,14 @@ impl Parse for BudgetSpec {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut spec = BudgetSpec::default();
 
-        while !input.is_empty() {
-            let ident: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
-            let ident_str = ident.to_string();
+    let limit = match syn::parse2::<BudgetLimit>(attr_tokens.clone()) {
+        Ok(l) => l,
+        Err(e) => return TokenStream::from(e.into_compile_error()),
+    };
+    let mut input_fn = match syn::parse2::<ItemFn>(item_tokens) {
+        Ok(f) => f,
+        Err(e) => return TokenStream::from(e.into_compile_error()),
+    };
 
             if ident_str == "env_ident" {
                 spec.env_ident = Some(input.parse()?);
