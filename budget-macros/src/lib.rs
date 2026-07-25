@@ -81,7 +81,7 @@ fn generate_limit_expr(limit: &BudgetLimit, metric_label: &str) -> proc_macro2::
     match limit {
         BudgetLimit::Int(n) => quote! { #n },
         BudgetLimit::EnvVar(var) => quote! {
-            _budget_env_resolve(#var)
+            budget_env_resolve(#var)
                 .map(|s| s.parse::<u64>().unwrap_or_else(|_| {
                     panic!(
                         "{}: env var {}={:?} is not a valid u64",
@@ -96,7 +96,7 @@ fn generate_limit_expr(limit: &BudgetLimit, metric_label: &str) -> proc_macro2::
             std::fs::read_to_string(std::path::Path::new("budget.json"))
                 .ok()
                 .map(|content| {
-                    _parse_config_value(&content, #key).unwrap_or_else(|| {
+                    parse_config_value(&content, #key).unwrap_or_else(|| {
                         panic!(
                             "{}: key '{}' not found or invalid in budget.json",
                             #metric_label,
@@ -158,11 +158,13 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
 
     let new_block = quote! {
         {
-            let _budget_env_resolve = |var: &str| -> Option<String> {
+            #[allow(unused_variables)]
+            let budget_env_resolve = |var: &str| -> Option<String> {
                 std::env::var(var).ok()
             };
 
-            let _parse_config_value = |content: &str, key: &str| -> Option<u64> {
+            #[allow(unused_variables)]
+            let parse_config_value = |content: &str, key: &str| -> Option<u64> {
                 let key_pattern = format!("\"{}\"", key);
                 let key_start = content.find(&key_pattern)?;
                 let after_key = &content[key_start + key_pattern.len()..];
