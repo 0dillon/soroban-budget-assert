@@ -1746,4 +1746,3 @@ mod tests {
         assert_eq!(csv, "package,function,metric,value\n");
     }
 }
-
