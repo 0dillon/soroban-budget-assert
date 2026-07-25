@@ -235,6 +235,10 @@ fn format_with_commas_and_units(value: u64, metric: &str) -> String {
 }
 
 fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> {
+    if let Some(error) = rpc_response.get("error") {
+        anyhow::bail!("{}", error);
+    }
+
     let tx_data_b64 = rpc_response["result"]["transactionData"]
         .as_str()
         .context("No transactionData found in simulateTransaction response.")?;
@@ -777,6 +781,26 @@ mod tests {
         assert_eq!(instructions, FIXTURE_INSTRUCTIONS);
         assert_eq!(read_bytes, FIXTURE_READ_BYTES);
         assert_eq!(write_bytes, FIXTURE_WRITE_BYTES);
+    }
+
+    #[test]
+    fn extract_metrics_fails_on_rpc_error() {
+        let rpc_json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request"
+            }
+        });
+        let result = extract_metrics(&rpc_json);
+        assert!(result.is_err());
+        let err = format!("{:#}", result.as_ref().unwrap_err());
+        assert!(
+            err.contains("Invalid Request"),
+            "error should mention the RPC error message, got: {}",
+            err
+        );
     }
 
     #[test]
