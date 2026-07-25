@@ -51,30 +51,27 @@ impl Parse for BudgetSpec {
             let ident: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
-            if ident == "env_ident" {
-                let env_ident: Ident = input.parse()?;
-                if spec.env_ident.is_some() {
-                    return Err(syn::Error::new(ident.span(), "duplicate key `env_ident`"));
-                }
-                spec.env_ident = Some(env_ident);
-            } else if ident == "cpu" {
-                let limit: BudgetLimit = input.parse()?;
-                if spec.cpu.is_some() {
-                    return Err(syn::Error::new(ident.span(), "duplicate key `cpu`"));
-                }
-                spec.cpu = Some(limit);
-            } else if ident == "mem" {
-                let limit: BudgetLimit = input.parse()?;
-                if spec.mem.is_some() {
-                    return Err(syn::Error::new(ident.span(), "duplicate key `mem`"));
-                }
-                spec.mem = Some(limit);
-            } else {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "unknown key, expected `cpu`, `mem`, or `env_ident`",
-                ));
+    let metric_label = match &metric {
+        BudgetMetric::CpuInstructionCost => "budget_cpu_lt",
+        BudgetMetric::MemoryBytesCost => "budget_mem_lt",
+    };
+
+    let limit_expr = match limit {
+        BudgetLimit::Int(n) => quote! { #n },
+        BudgetLimit::EnvVar(var) => quote! {
+            match budget_env_resolve(#var) {
+                Some(s) => s.parse::<u64>().unwrap_or_else(|_| {
+                    panic!(
+                        "{}: env var {}={:?} is not a valid u64",
+                        #metric_label,
+                        #var,
+                        s
+                    )
+                }),
+                None => u64::MAX,
             }
+        },
+    };
 
             if !input.is_empty() {
                 input.parse::<Token![,]>()?;
@@ -184,6 +181,10 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
 /// significantly in either direction depending on the build profile — see
 /// `docs/src/mechanics.md` for measurements. Use `cargo budget-report` for
 /// network ground truth.
+///
+/// When using `env = "VAR"`, an unset environment variable means "no limit"
+/// (the assertion will always pass). The test will panic if the variable is
+/// set but its value cannot be parsed as a `u64`.
 #[proc_macro_attribute]
 pub fn budget_cpu_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {
@@ -205,6 +206,10 @@ pub fn budget_cpu_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// significantly in either direction depending on the build profile — see
 /// `docs/src/mechanics.md` for measurements. Use `cargo budget-report` for
 /// network ground truth.
+///
+/// When using `env = "VAR"`, an unset environment variable means "no limit"
+/// (the assertion will always pass). The test will panic if the variable is
+/// set but its value cannot be parsed as a `u64`.
 #[proc_macro_attribute]
 pub fn budget_mem_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {

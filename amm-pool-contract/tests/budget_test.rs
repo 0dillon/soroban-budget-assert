@@ -123,32 +123,37 @@ fn test_budget_macro_dynamic_env_fallback() {
 }
 
 #[test]
-#[budget_lt(cpu = 2500000, mem = 5000000)]
-fn test_budget_lt_combined() {
-    let env = Env::default();
-    let (client, user) = setup_wasm(&env);
-
-    client.deposit(&user, &10_000_i128, &10_000_i128);
-    client.swap(&user, &true, &100_i128, &90_i128);
-    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
-}
-
-#[test]
-#[budget_lt(cpu = env("TEST_MAX_CPU"), mem = env("TEST_MAX_MEM"), env_ident = test_env)]
-fn test_budget_lt_dynamic_custom_env() {
+#[should_panic(expected = "budget_cpu_lt: env var BAD_CPU_LIMIT")]
+#[budget_cpu_lt(env = "BAD_CPU_LIMIT")]
+fn test_budget_macro_dynamic_env_invalid_value() {
     let budget_env_resolve = |var: &str| -> Option<String> {
-        if var == "TEST_MAX_CPU" {
-            Some("2500000".to_string())
-        } else if var == "TEST_MAX_MEM" {
-            Some("5000000".to_string())
+        if var == "BAD_CPU_LIMIT" {
+            Some("1_000_000".to_string())
         } else {
             None
         }
     };
-    let test_env = Env::default();
-    let (client, user) = setup_wasm(&test_env);
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.cost_estimate().budget().reset_unlimited();
+    client.do_expensive_work(&10_000);
+}
 
-    client.deposit(&user, &10_000_i128, &10_000_i128);
-    client.swap(&user, &true, &100_i128, &90_i128);
-    client.withdraw(&user, &1_000_i128, &900_i128, &900_i128);
+#[test]
+#[should_panic(expected = "budget_mem_lt: env var BAD_MEM_LIMIT")]
+#[budget_mem_lt(env = "BAD_MEM_LIMIT")]
+fn test_budget_macro_mem_dynamic_env_invalid_value() {
+    let budget_env_resolve = |var: &str| -> Option<String> {
+        if var == "BAD_MEM_LIMIT" {
+            Some("not_a_number".to_string())
+        } else {
+            None
+        }
+    };
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.cost_estimate().budget().reset_unlimited();
+    client.do_expensive_work(&10_000);
 }
