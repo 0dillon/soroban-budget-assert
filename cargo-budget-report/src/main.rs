@@ -4,8 +4,9 @@ use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
@@ -257,6 +258,153 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
     ))
 }
 
+/// Why simulating a single exported function did not produce metrics.
+/// Carries the same text the caller previously logged inline, so extracting
+/// this out of the main loop doesn't change any user-facing diagnostics.
+enum SimulationFailure {
+    /// `stellar contract invoke --build-only` exited non-zero.
+    Invoke(String),
+    /// The RPC `simulateTransaction` response contained an `"error"` field.
+    Rpc(String),
+    /// The RPC response didn't contain a decodable `SorobanTransactionData`.
+    MetricsExtraction(String),
+}
+
+/// Outcome of simulating one exported function.
+enum SimulationOutcome {
+    Metrics {
+        instructions: u32,
+        read_bytes: u32,
+        write_bytes: u32,
+    },
+    Failed(SimulationFailure),
+}
+
+/// Builds the `stellar contract invoke --build-only -- <function> [args..]`
+/// argument list for one exported function.
+fn build_invoke_args(
+    contract_id: &str,
+    source: &str,
+    network: &str,
+    function: &str,
+    func_args: &[String],
+) -> Vec<String> {
+    let mut invoke_args = vec![
+        "contract".to_string(),
+        "invoke".to_string(),
+        "--id".to_string(),
+        contract_id.to_string(),
+        "--source".to_string(),
+        source.to_string(),
+        "--network".to_string(),
+        network.to_string(),
+        "--build-only".to_string(),
+        "--".to_string(),
+        function.to_string(),
+    ];
+    invoke_args.extend(func_args.iter().cloned());
+    invoke_args
+}
+
+/// Builds the JSON-RPC `simulateTransaction` request body for a base64 XDR
+/// transaction envelope.
+fn build_rpc_payload(b64_xdr: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateTransaction",
+        "params": {
+            "transaction": b64_xdr
+        }
+    })
+}
+
+/// POSTs a `simulateTransaction` JSON-RPC request for `b64_xdr` and returns
+/// the parsed response body.
+fn simulate_transaction_rpc(b64_xdr: &str) -> Result<serde_json::Value> {
+    let rpc_payload = build_rpc_payload(b64_xdr);
+
+    let mut curl = Command::new("curl")
+        .args([
+            "-s",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            "@-",
+            "https://soroban-testnet.stellar.org:443",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("failed to execute curl")?;
+
+    {
+        let stdin = curl.stdin.as_mut().context("Failed to open stdin")?;
+        stdin
+            .write_all(rpc_payload.to_string().as_bytes())
+            .context("Failed to write to stdin")?;
+    }
+
+    let curl_output = curl
+        .wait_with_output()
+        .context("Failed to read curl output")?;
+    serde_json::from_slice(&curl_output.stdout).context("Failed to parse RPC response")
+}
+
+/// Simulates one exported function end-to-end: runs
+/// `stellar contract invoke --build-only` to build the transaction, then
+/// POSTs it to `simulateTransaction` and decodes the reported resource
+/// usage.
+///
+/// Returns `Err` only for a spawn/IO failure on the `stellar`/`curl` child
+/// processes — the tool cannot proceed without those binaries. A
+/// *recoverable* simulation failure (non-zero invoke exit, an RPC `error`
+/// field, or an undecodable response) is reported as
+/// `Ok(SimulationOutcome::Failed(..))` so the caller can move on to the next
+/// function instead of aborting the whole report.
+fn simulate_function(
+    contract_id: &str,
+    source: &str,
+    network: &str,
+    function: &str,
+    func_args: &[String],
+) -> Result<SimulationOutcome> {
+    let invoke_args = build_invoke_args(contract_id, source, network, function, func_args);
+    let invoke_output = Command::new("stellar")
+        .args(&invoke_args)
+        .output()
+        .context("failed to execute stellar-cli invoke")?;
+
+    if !invoke_output.status.success() {
+        let stderr = String::from_utf8_lossy(&invoke_output.stderr).to_string();
+        return Ok(SimulationOutcome::Failed(SimulationFailure::Invoke(stderr)));
+    }
+
+    let b64_xdr = String::from_utf8_lossy(&invoke_output.stdout)
+        .trim()
+        .to_string();
+    let rpc_resp = simulate_transaction_rpc(&b64_xdr)?;
+
+    if let Some(error) = rpc_resp.get("error") {
+        return Ok(SimulationOutcome::Failed(SimulationFailure::Rpc(
+            error.to_string(),
+        )));
+    }
+
+    match extract_metrics(&rpc_resp) {
+        Ok((instructions, read_bytes, write_bytes)) => Ok(SimulationOutcome::Metrics {
+            instructions,
+            read_bytes,
+            write_bytes,
+        }),
+        Err(err) => Ok(SimulationOutcome::Failed(
+            SimulationFailure::MetricsExtraction(format!("{:#}", err)),
+        )),
+    }
+}
+
 fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     match std::fs::read_to_string(&path) {
         Ok(contents) => toml::from_str(&contents)
@@ -483,137 +631,59 @@ fn main() -> Result<()> {
             let func_config = toml_config.functions.get(&function);
             let func_args = func_config.map(|c| c.args.clone()).unwrap_or_default();
 
-            let mut invoke_args = vec![
-                "contract".to_string(),
-                "invoke".to_string(),
-                "--id".to_string(),
-                contract_id.clone(),
-                "--source".to_string(),
-                source.clone(),
-                "--network".to_string(),
-                network.clone(),
-                "--build-only".to_string(),
-                "--".to_string(),
-                function.clone(),
-            ];
-            invoke_args.extend(func_args);
-
-            let invoke_output = Command::new("stellar")
-                .args(&invoke_args)
-                .output()
-                .context("failed to execute stellar-cli invoke")?;
-
-            if !invoke_output.status.success() {
-                has_errors = true;
-                eprintln!(
-                    "Warning: Simulation failed for {}: {}",
-                    function,
-                    String::from_utf8_lossy(&invoke_output.stderr)
-                );
-                if let (true, Some(fc)) = (args.check, func_config) {
-                    // A configured function that won't simulate cannot satisfy
-                    // any of its declared limits; record this as a check failure
-                    // even if no `*_limit` is set on this row of budget.toml.
-                    checks_failed = true;
-                    emit_check_failure_entries(&mut reports, &package.name, &function, fc);
-                }
-            } else {
-                let b64_xdr = String::from_utf8_lossy(&invoke_output.stdout)
-                    .trim()
-                    .to_string();
-
-                let rpc_payload = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "simulateTransaction",
-                    "params": {
-                        "transaction": b64_xdr
-                    }
-                });
-
-                use std::io::Write;
-                let mut curl = Command::new("curl")
-                    .args([
-                        "-s",
-                        "-X",
-                        "POST",
-                        "-H",
-                        "Content-Type: application/json",
-                        "-d",
-                        "@-",
-                        "https://soroban-testnet.stellar.org:443",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .spawn()
-                    .context("failed to execute curl")?;
-
-                {
-                    let stdin = curl.stdin.as_mut().context("Failed to open stdin")?;
-                    stdin
-                        .write_all(rpc_payload.to_string().as_bytes())
-                        .context("Failed to write to stdin")?;
-                }
-
-                let curl_output = curl
-                    .wait_with_output()
-                    .context("Failed to read curl output")?;
-                let rpc_resp: serde_json::Value = serde_json::from_slice(&curl_output.stdout)
-                    .context("Failed to parse RPC response")?;
-
-                if let Some(error) = rpc_resp.get("error") {
-                    has_errors = true;
-                    eprintln!("Warning: RPC error for {}: {}", function, error);
-                    if let (true, Some(fc)) = (args.check, func_config) {
-                        checks_failed = true;
-                        emit_check_failure_entries(&mut reports, &package.name, &function, fc);
-                    }
-                } else {
-                    match extract_metrics(&rpc_resp) {
-                        Ok((instructions, read_bytes, write_bytes)) => {
-                            // Build three CostReport entries for this function.
-                            // In --check mode, attach the configured limit and
-                            // pass/fail to each entry.
-                            for (metric, value) in [
-                                ("CPU Instructions", instructions),
-                                ("Read Bytes", read_bytes),
-                                ("Write Bytes", write_bytes),
-                                ("WASM Bytes", wasm_size),
-                            ] {
-                                let limit = func_config.and_then(|c| limit_for_metric(c, metric));
-                                let (entry_limit, pass) = evaluate_check(value, limit);
-                                if pass == Some(false) {
-                                    checks_failed = true;
-                                }
-                                reports.push(CostReport {
-                                    package: package.name.to_string(),
-                                    function: function.clone(),
-                                    metric,
-                                    value: Some(value),
-                                    limit: entry_limit,
-                                    pass,
-                                });
-                            }
+            match simulate_function(&contract_id, &source, &network, &function, &func_args)? {
+                SimulationOutcome::Metrics {
+                    instructions,
+                    read_bytes,
+                    write_bytes,
+                } => {
+                    // Build three CostReport entries for this function. In
+                    // --check mode, attach the configured limit and
+                    // pass/fail to each entry.
+                    for (metric, value) in [
+                        ("CPU Instructions", instructions),
+                        ("Read Bytes", read_bytes),
+                        ("Write Bytes", write_bytes),
+                        ("WASM Bytes", wasm_size),
+                    ] {
+                        let limit = func_config.and_then(|c| limit_for_metric(c, metric));
+                        let (entry_limit, pass) = evaluate_check(value, limit);
+                        if pass == Some(false) {
+                            checks_failed = true;
                         }
-                        Err(err) => {
-                            has_errors = true;
+                        reports.push(CostReport {
+                            package: package.name.to_string(),
+                            function: function.clone(),
+                            metric,
+                            value: Some(value),
+                            limit: entry_limit,
+                            pass,
+                        });
+                    }
+                }
+                SimulationOutcome::Failed(failure) => {
+                    has_errors = true;
+                    match failure {
+                        SimulationFailure::Invoke(stderr) => {
+                            eprintln!("Warning: Simulation failed for {}: {}", function, stderr);
+                        }
+                        SimulationFailure::Rpc(error) => {
+                            eprintln!("Warning: RPC error for {}: {}", function, error);
+                        }
+                        SimulationFailure::MetricsExtraction(err) => {
                             eprintln!(
-                                "Warning: Failed to extract metrics for {}: {:#}",
+                                "Warning: Failed to extract metrics for {}: {}",
                                 function, err
                             );
-                            if let (true, Some(fc)) = (args.check, func_config) {
-                                // A configured function whose sim produced an
-                                // extractable-but-unparseable response cannot
-                                // satisfy any of its declared limits.
-                                checks_failed = true;
-                                emit_check_failure_entries(
-                                    &mut reports,
-                                    &package.name,
-                                    &function,
-                                    fc,
-                                );
-                            }
                         }
+                    }
+                    if let (true, Some(fc)) = (args.check, func_config) {
+                        // A configured function that won't simulate cannot
+                        // satisfy any of its declared limits; record this as
+                        // a check failure even if no `*_limit` is set on
+                        // this row of budget.toml.
+                        checks_failed = true;
+                        emit_check_failure_entries(&mut reports, &package.name, &function, fc);
                     }
                 }
             }
@@ -754,6 +824,67 @@ mod tests {
             .as_nanos();
         path.push(format!("cargo_budget_report_test_{}.toml", nanos));
         path
+    }
+
+    // --- Network simulation loop helper tests ---
+
+    #[test]
+    fn build_invoke_args_without_function_args() {
+        let invoke_args = build_invoke_args("CCONTRACT", "alice", "testnet", "do_work", &[]);
+        assert_eq!(
+            invoke_args,
+            vec![
+                "contract",
+                "invoke",
+                "--id",
+                "CCONTRACT",
+                "--source",
+                "alice",
+                "--network",
+                "testnet",
+                "--build-only",
+                "--",
+                "do_work",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_invoke_args_appends_function_args_after_separator() {
+        let func_args = vec!["--n".to_string(), "10000".to_string()];
+        let invoke_args = build_invoke_args("CCONTRACT", "alice", "testnet", "do_work", &func_args);
+        assert_eq!(
+            invoke_args,
+            vec![
+                "contract",
+                "invoke",
+                "--id",
+                "CCONTRACT",
+                "--source",
+                "alice",
+                "--network",
+                "testnet",
+                "--build-only",
+                "--",
+                "do_work",
+                "--n",
+                "10000",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_rpc_payload_wraps_xdr_in_simulate_transaction_request() {
+        let payload = build_rpc_payload("AAAAAgAAAAA=");
+        assert_eq!(payload["jsonrpc"], "2.0");
+        assert_eq!(payload["method"], "simulateTransaction");
+        assert_eq!(payload["params"]["transaction"], "AAAAAgAAAAA=");
+    }
+
+    #[test]
+    fn build_rpc_payload_empty_xdr_is_still_well_formed() {
+        let payload = build_rpc_payload("");
+        assert_eq!(payload["params"]["transaction"], "");
     }
 
     // --- Metric extraction tests ---
