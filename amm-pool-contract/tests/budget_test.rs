@@ -178,9 +178,11 @@ fn test_budget_macro_json_config_mem_valid() {
 }
 
 #[test]
+#[should_panic(
+    expected = "key 'non_existent_key' not found or invalid in budget.json"
+)]
 #[budget_cpu_lt(config = "non_existent_key")]
 fn test_budget_macro_json_config_missing_key() {
-    // Valid JSON but missing the requested key -> falls back to u64::MAX.
     let _guard = BudgetJsonGuard::create(r#"{"some_other_key": 100}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -206,12 +208,12 @@ fn test_budget_macro_json_config_deliberate_regression() {
 }
 
 #[test]
+#[should_panic(
+    expected = "key 'cpu_instructions' not found or invalid in budget.json"
+)]
 #[budget_cpu_lt(config = "cpu_instructions")]
-fn test_budget_macro_json_config_fallback_missing_key() {
-    // Write an empty JSON object so the requested key won't be found.
-    // This exercises the same fallback-to-u64::MAX path as a missing file.
-    // The guard also acquires the global mutex so this test never races
-    // with another JSON config test over the shared budget.json file.
+fn test_budget_macro_json_config_missing_key_empty_config() {
+    // Empty JSON object -> requested key won't be found -> macro panics.
     let _guard = BudgetJsonGuard::create(r#"{}"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
@@ -222,9 +224,11 @@ fn test_budget_macro_json_config_fallback_missing_key() {
 }
 
 #[test]
+#[should_panic(
+    expected = "key 'cpu_instructions' not found or invalid in budget.json"
+)]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_invalid_json() {
-    // Malformed JSON content -> parse_config_value returns None -> u64::MAX.
     let _guard = BudgetJsonGuard::create(r#"this is not valid json at all"#);
     let env = Env::default();
     let (client, user) = setup_wasm(&env);

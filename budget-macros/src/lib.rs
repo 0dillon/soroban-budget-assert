@@ -79,11 +79,11 @@ fn generate_budget_assert(
                         match parse_config_value(&content, #key) {
                             Some(v) => v,
                             None => {
-                                eprintln!(
-                                    "warning: key '{}' not found or invalid in budget.json; falling back to u64::MAX",
-                                    #key
-                                );
-                                u64::MAX
+                                panic!(
+                                    "{}: key '{}' not found or invalid in budget.json",
+                                    #metric_label,
+                                    #key,
+                                )
                             }
                         }
                     }
