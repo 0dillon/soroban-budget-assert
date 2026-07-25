@@ -86,7 +86,7 @@ fn test_budget_wasm() {
 }
 
 #[test]
-#[budget_cpu_lt(50000000)]
+#[budget_lt(cpu = 50000000, mem = 50000000)]
 fn test_budget_require_auth_deposit() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
