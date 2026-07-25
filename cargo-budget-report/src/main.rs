@@ -101,6 +101,10 @@ fn format_with_commas_and_units(value: u32, metric: &str) -> String {
 }
 
 fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> {
+    if let Some(error) = rpc_response.get("error") {
+        anyhow::bail!("{}", error);
+    }
+
     let tx_data_b64 = rpc_response["result"]["transactionData"]
         .as_str()
         .context("No transactionData found in simulateTransaction response.")?;
@@ -328,14 +332,14 @@ fn main() -> Result<()> {
             let rpc_resp: serde_json::Value = serde_json::from_slice(&curl_output.stdout)
                 .context("Failed to parse RPC response")?;
 
-            if let Some(error) = rpc_resp.get("error") {
-                has_errors = true;
-                eprintln!("Warning: RPC error for {}: {}", function, error);
-                continue;
-            }
-
-            let (instructions, read_bytes, write_bytes) =
-                extract_metrics(&rpc_resp).context("Failed to extract metrics from RPC response")?;
+            let (instructions, read_bytes, write_bytes) = match extract_metrics(&rpc_resp) {
+                Ok(metrics) => metrics,
+                Err(err) => {
+                    has_errors = true;
+                    eprintln!("Warning: RPC error for {}: {}", function, err);
+                    continue;
+                }
+            };
 
             reports.push(CostReport {
                 package: package.name.to_string(),
@@ -470,8 +474,7 @@ mod tests {
             .join("fixtures")
             .join("simulate_transaction_response_valid.json");
         let fixture_json: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&fixture_path)
-                .expect("failed to read fixture file"),
+            &std::fs::read_to_string(&fixture_path).expect("failed to read fixture file"),
         )
         .expect("failed to parse fixture JSON");
 
@@ -484,6 +487,26 @@ mod tests {
         assert_eq!(instructions, FIXTURE_INSTRUCTIONS);
         assert_eq!(read_bytes, FIXTURE_READ_BYTES);
         assert_eq!(write_bytes, FIXTURE_WRITE_BYTES);
+    }
+
+    #[test]
+    fn extract_metrics_fails_on_rpc_error() {
+        let rpc_json = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request"
+            }
+        });
+        let result = extract_metrics(&rpc_json);
+        assert!(result.is_err());
+        let err = format!("{:#}", result.as_ref().unwrap_err());
+        assert!(
+            err.contains("Invalid Request"),
+            "error should mention the RPC error message, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -524,13 +547,15 @@ mod tests {
             .join("fixtures")
             .join("simulate_transaction_response_malformed.json");
         let fixture_json: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&fixture_path)
-                .expect("failed to read malformed fixture file"),
+            &std::fs::read_to_string(&fixture_path).expect("failed to read malformed fixture file"),
         )
         .expect("failed to parse malformed fixture JSON");
 
         let result = extract_metrics(&fixture_json);
-        assert!(result.is_err(), "extraction should fail on malformed response");
+        assert!(
+            result.is_err(),
+            "extraction should fail on malformed response"
+        );
     }
 
     #[test]
@@ -543,7 +568,10 @@ mod tests {
             }
         });
         let result = extract_metrics(&rpc_json);
-        assert!(result.is_err(), "extraction should fail when transactionData is not a string");
+        assert!(
+            result.is_err(),
+            "extraction should fail when transactionData is not a string"
+        );
     }
 
     // --- Budget toml loading tests ---
