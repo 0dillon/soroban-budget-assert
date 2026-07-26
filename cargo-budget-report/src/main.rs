@@ -419,8 +419,20 @@ fn simulate_function(
 
 fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     match std::fs::read_to_string(&path) {
-        Ok(contents) => toml::from_str(&contents)
-            .map_err(|err| anyhow::anyhow!("failed to parse {}: {}", path.as_ref().display(), err)),
+        Ok(contents) => {
+            let trimmed = contents.trim();
+            if trimmed.is_empty()
+                || trimmed
+                    .lines()
+                    .all(|line| line.trim().is_empty() || line.trim_start().starts_with('#'))
+            {
+                return Ok(BudgetToml::default());
+            }
+
+            toml::from_str(&contents).map_err(|err| {
+                anyhow::anyhow!("failed to parse {}: {}", path.as_ref().display(), err)
+            })
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BudgetToml::default()),
         Err(err) => Err(err).with_context(|| format!("failed to read {}", path.as_ref().display())),
     }
@@ -1097,6 +1109,17 @@ mod tests {
         let _ = fs::remove_file(&path);
 
         let config = load_budget_toml(&path).expect("missing file should return default");
+        assert!(config.network.is_none());
+        assert!(config.source.is_none());
+        assert!(config.functions.is_empty());
+    }
+
+    #[test]
+    fn empty_budget_toml_returns_default() {
+        let path = unique_test_path();
+        fs::write(&path, "\n\n").expect("failed to write empty budget.toml");
+
+        let config = load_budget_toml(&path).expect("empty file should return default");
         assert!(config.network.is_none());
         assert!(config.source.is_none());
         assert!(config.functions.is_empty());
