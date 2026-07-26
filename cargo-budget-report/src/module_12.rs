@@ -32,7 +32,12 @@ pub fn validate_function_name(name: &str) -> Result<(), String> {
 }
 
 pub fn validate_source(source: &str) -> Result<(), String> {
-    validate_in_list(source, &["", " ", "\t", "\n", "\r"], "source account", false)
+    validate_in_list(
+        source,
+        &["", " ", "\t", "\n", "\r"],
+        "source account",
+        false,
+    )
 }
 
 #[cfg(test)]
