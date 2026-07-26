@@ -3,7 +3,7 @@ use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -774,7 +774,7 @@ fn main() -> Result<()> {
         // Parse WASM exports
         let wasm_bytes = std::fs::read(&wasm_path).context("failed to read wasm file")?;
         let wasm_size: u32 = wasm_bytes.len().try_into().unwrap_or(u32::MAX);
-        let mut exported_fns = Vec::new();
+        let mut exported_fns: HashSet<String> = HashSet::new();
 
         for payload in WasmParser::new(0).parse_all(&wasm_bytes) {
             if let wasmparser::Payload::ExportSection(export_section) = payload? {
@@ -784,7 +784,7 @@ fn main() -> Result<()> {
                         let name = export_item.name.to_string();
                         // Ignore internal and common exports
                         if !name.starts_with('_') && name != "memory" {
-                            exported_fns.push(name);
+                            exported_fns.insert(name);
                         }
                     }
                 }
