@@ -188,7 +188,10 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
         }
     };
 
-    *input_fn.block = syn::parse2(new_block).unwrap();
+    *input_fn.block = match syn::parse2(new_block) {
+        Ok(block) => block,
+        Err(e) => return TokenStream::from(e.into_compile_error()),
+    };
 
     TokenStream::from(quote! {
         #input_fn
