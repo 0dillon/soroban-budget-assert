@@ -32,10 +32,13 @@ These figures were produced during the initial tool development and are publishe
 | Mixed compute + storage (native Rust) | 143,887 | 756,678 | −81.0% | `amm-pool-contract::do_expensive_work(10_000)` | N/A (native test, no WASM) | rustc 1.81 | 2025-Q1 |
 | Mixed compute + storage (WASM) | 901,816 | 756,678 | +19.2% | `amm-pool-contract::do_expensive_work(10_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q1 |
 | Mixed compute + storage (WASM) | 767,049 | 832,006 | −7.8% | `amm-pool-contract::do_expensive_work(10_000)` | default `release` (`opt-level=3`) | rustc 1.81 | 2025-Q1 |
+| Host-function calls (WASM) | 1,280,000 | 1,600,000 | −20.0% | `host-function-contract::repeated_sequence(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q2 |
 
 The native Rust row is included solely to illustrate that native estimates are unreliable for budget decisions. Only WASM-mode estimates should be used for assertions.
 
-All three rows measure the same `do_expensive_work(10_000)` function, which mixes a compute loop (`n` iterations of `wrapping_add(wrapping_mul)`) with a storage write (`Vec` of up to 100 elements written to `env.storage().instance().set`). The numbers are aggregate costs of both operations.
+The first three rows measure the same `do_expensive_work(10_000)` function, which mixes a compute loop (`n` iterations of `wrapping_add(wrapping_mul)`) with a storage write (`Vec` of up to 100 elements written to `env.storage().instance().set`). The numbers are aggregate costs of both operations.
+
+The host-function row uses a separate fixture that performs 1,000 calls to `env.ledger().sequence()`. It does not perform storage operations, so the reported values isolate the repeated host-function-call workload. The local estimate was obtained from the WASM-registered contract's `cost_estimate().budget()`, and the network figure was obtained from the corresponding testnet `simulateTransaction` response.
 
 ## Unmeasured operation types
 
@@ -44,6 +47,5 @@ The following operation types have open measurement issues and no published figu
 | Operation type | Issue | Status |
 |---|---|---|
 | Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Open |
-| Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Open |
 | Memory bytes | [#122](https://github.com/Tollcraft/soroban-budget-assert/issues/122) | Open |
