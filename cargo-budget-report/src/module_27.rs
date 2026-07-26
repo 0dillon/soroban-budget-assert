@@ -1,6 +1,11 @@
 //! Unit tests that document and verify the bitwise and numeric manipulation
 //! logic inside `cargo-budget-report`.
 //!
+//! **Implementation location**: the functions exercised here are defined in
+//! `cargo-budget-report/src/main.rs`.  Specifically:
+//! * `format_with_commas_and_units` — the comma-insertion loop (~line 300).
+//! * `evaluate_check` — the widening-cast comparison (~line 243).
+//!
 //! ## What "bitwise / numeric manipulation" means here
 //!
 //! The tool does not use explicit bit-shift (`<<`, `>>`) or bitwise-AND/OR/XOR
@@ -14,6 +19,19 @@
 //!    left-to-right order.  The double-reversal pattern is easy to confuse
 //!    with an off-by-one error, so these tests pin every significant boundary.
 //!
+//!    Step-by-step for `1_000`:
+//!    ```text
+//!    value.to_string() = "1000"
+//!    reversed chars:  '0', '0', '0', '1'
+//!    iteration:
+//!      push '0' → digit_count=1
+//!      push '0' → digit_count=2
+//!      push '0' → digit_count=3 → reset to 0, push ','
+//!      push '1' → digit_count=1
+//!    accumulated = "000,1"
+//!    second reversal → "1,000"
+//!    ```
+//!
 //! 2. **`evaluate_check`** — compares a `u32` measurement against a `u64`
 //!    limit.  The operands deliberately have *different widths*: the
 //!    measurement comes from a Soroban XDR `u32` field, while budget limits
@@ -23,6 +41,13 @@
 //!    of `value` were changed to a signed integer.  The comparison is
 //!    *inclusive*: `value <= limit` so that a measurement that exactly meets
 //!    the limit is considered a pass.
+//!
+//!    The three possible outcomes of `evaluate_check`:
+//!    | `limit` arg | result              | meaning                          |
+//!    |-------------|---------------------|----------------------------------|
+//!    | `None`      | `(None, None)`      | metric reported, not enforced    |
+//!    | `Some(L)`, value ≤ L | `(Some(L), Some(true))`  | within budget  |
+//!    | `Some(L)`, value > L | `(Some(L), Some(false))` | budget breached |
 
 #[cfg(test)]
 mod bitwise_and_numeric_tests {
@@ -89,6 +114,13 @@ mod bitwise_and_numeric_tests {
     #[test]
     fn format_six_digit_value_gets_one_comma() {
         // 6 digits = two groups of 3; exactly one comma separates them.
+        //
+        // Trace for 123_456:
+        //   reversed chars: '6','5','4','3','2','1'
+        //   push '6' count=1, push '5' count=2, push '4' count=3
+        //     → count resets to 0, push ','
+        //   push '3' count=1, push '2' count=2, push '1' count=3
+        //   accumulated = "654,321"  →  reversed = "123,456"
         assert_eq!(
             format_with_commas_and_units(123_456, "CPU Instructions"),
             "123,456 inst."
@@ -98,6 +130,10 @@ mod bitwise_and_numeric_tests {
     #[test]
     fn format_seven_digit_value_gets_two_commas() {
         // 7 digits = one 1-digit group + two 3-digit groups → two commas.
+        //
+        // The modular counter resets independently at each group boundary,
+        // so it cycles: 1→2→3→reset, 1→2→3→reset, 1.
+        // Two resets = two commas inserted.
         assert_eq!(
             format_with_commas_and_units(1_234_567, "CPU Instructions"),
             "1,234,567 inst."

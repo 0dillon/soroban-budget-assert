@@ -242,7 +242,19 @@ fn limit_for_metric(func_config: &FunctionConfig, metric: &str) -> Option<u64> {
 ///   the caller should mark the check as failed.
 fn evaluate_check(value: u32, limit: Option<u64>) -> (Option<u64>, Option<bool>) {
     match limit {
-        Some(limit_value) => (Some(limit_value), Some(u64::from(value) <= limit_value)),
+        Some(limit_value) => (
+            Some(limit_value),
+            // Widen `value` from u32 → u64 before comparing.
+            // `u64::from(value)` is preferred over `value as u64` because it
+            // is a lossless, explicitly zero-extending conversion.  If the
+            // type of `value` were ever changed to a signed integer (e.g.
+            // i32), the compiler would reject `u64::from(value)` rather than
+            // silently sign-extending via `as`.
+            // The comparison is inclusive (`<=`): a measurement that exactly
+            // equals the configured limit is still a passing result.
+            Some(u64::from(value) <= limit_value),
+        ),
+        // No limit configured — report the metric but do not enforce it.
         None => (None, None),
     }
 }
@@ -291,17 +303,31 @@ fn emit_check_failure_entries(
 fn format_with_commas_and_units(value: u64, metric: &str) -> String {
     let value_str = value.to_string();
     let mut result = String::new();
+    // `digit_count` tracks how many decimal digits have been accumulated since
+    // the last comma (or since the start).  When it reaches 3 we are at a
+    // thousands-group boundary and must insert a separator before the next
+    // (more-significant) digit.
     let mut digit_count = 0;
+    // Iterate least-significant digit first so the comma decision is simply
+    // "have we collected 3 digits yet?" — no look-ahead or total-digit-count
+    // needed.  This is the first of two reversals.
     for ch in value_str.chars().rev() {
         if digit_count == 3 {
+            // Modular boundary: insert the comma *before* pushing the next
+            // digit, then reset the counter for the new group.
             result.push(',');
             digit_count = 0;
         }
         result.push(ch);
         digit_count += 1;
     }
+    // Second reversal: the accumulated string is in reverse order (least
+    // significant first, commas in mirrored positions).  Re-reversing
+    // restores natural left-to-right reading order.
     let formatted = result.chars().rev().collect::<String>();
 
+    // Choose the unit suffix based on whether the metric name contains "Bytes".
+    // "CPU Instructions" → "inst.", "Read Bytes" / "Write Bytes" → "B".
     if metric.contains("Bytes") {
         format!("{} B", formatted)
     } else {
