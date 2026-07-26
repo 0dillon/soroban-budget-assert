@@ -103,6 +103,15 @@ struct BudgetReportArgs {
     /// Emit the report as CSV instead of a table or JSON.
     #[arg(long, default_value_t = false)]
     csv: bool,
+
+    /// Suppress non-essential progress messages and warnings on stderr.
+    ///
+    /// The final report (table, JSON, or CSV) is still printed to stdout.
+    /// Fatal errors from child-process spawn failures or hard contract
+    /// build failures are not suppressed — they always go to stderr
+    /// regardless of this flag.
+    #[arg(long, default_value_t = false)]
+    quiet: bool,
 }
 
 /// Top-level configuration deserialized from `budget.toml`.
@@ -536,14 +545,16 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
 
 /// Scaffold a commented `budget.toml` template. Errors if the file already
 /// exists and `force` is not set.
-fn scaffold_init(force: bool) -> Result<()> {
+fn scaffold_init(force: bool, quiet: bool) -> Result<()> {
     let path = Path::new("budget.toml");
     if path.exists() && !force {
         anyhow::bail!("budget.toml already exists; use --force to overwrite");
     }
     std::fs::write(path, BUDGET_TOML_TEMPLATE)
         .with_context(|| format!("failed to write {}", path.display()))?;
-    eprintln!("Wrote {}", path.display());
+    if !quiet {
+        eprintln!("Wrote {}", path.display());
+    }
     Ok(())
 }
 
@@ -551,9 +562,11 @@ fn scaffold_init(force: bool) -> Result<()> {
 ///
 /// Each check fails fast with an actionable error message. Checks that are
 /// not applicable (e.g. rustup not installed) are silently skipped.
-fn run_preflight_checks() -> Result<()> {
+fn run_preflight_checks(quiet: bool) -> Result<()> {
     // ── stellar CLI ─────────────────────────────────────────────────────
-    eprint!("Checking Stellar CLI... ");
+    if !quiet {
+        eprint!("Checking Stellar CLI... ");
+    }
     let stellar_check = Command::new("stellar").arg("--version").output();
     match stellar_check {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -574,19 +587,25 @@ fn run_preflight_checks() -> Result<()> {
             );
         }
         Ok(_output) => {
-            eprintln!("found");
+            if !quiet {
+                eprintln!("found");
+            }
         }
     }
 
     // ── wasm32 target ───────────────────────────────────────────────────
-    eprint!("Checking wasm32-unknown-unknown target... ");
+    if !quiet {
+        eprint!("Checking wasm32-unknown-unknown target... ");
+    }
     let rustup_check = Command::new("rustup")
         .args(["target", "list", "--installed"])
         .output();
     match rustup_check {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // rustup is not installed — skip the check silently.
-            eprintln!("skipped (rustup not found)");
+            if !quiet {
+                eprintln!("skipped (rustup not found)");
+            }
         }
         Err(e) => {
             anyhow::bail!("failed to execute rustup: {}", e);
@@ -597,7 +616,9 @@ fn run_preflight_checks() -> Result<()> {
                 .lines()
                 .any(|line| line.trim() == "wasm32-unknown-unknown")
             {
-                eprintln!("found");
+                if !quiet {
+                    eprintln!("found");
+                }
             } else {
                 anyhow::bail!(
                     "wasm32-unknown-unknown target is not installed.\n\
@@ -673,11 +694,11 @@ fn main() -> Result<()> {
 
     // ── --init: scaffold a template and exit ──────────────────────────
     if args.init {
-        return scaffold_init(args.force);
+        return scaffold_init(args.force, args.quiet);
     }
 
     // ── Preflight environment checks ──────────────────────────────────
-    run_preflight_checks()?;
+    run_preflight_checks(args.quiet)?;
 
     let toml_config = load_budget_toml("budget.toml")?;
 
@@ -690,7 +711,9 @@ fn main() -> Result<()> {
         .or(toml_config.source)
         .context("missing --source or budget.toml source field")?;
 
-    eprintln!("Discovering workspace members...");
+    if !args.quiet {
+        eprintln!("Discovering workspace members...");
+    }
     let metadata = MetadataCommand::new()
         .no_deps()
         .exec()
@@ -709,7 +732,9 @@ fn main() -> Result<()> {
             continue;
         }
 
-        eprintln!("Building package '{}' for wasm32...", package.name);
+        if !args.quiet {
+            eprintln!("Building package '{}' for wasm32...", package.name);
+        }
         let build_status = Command::new("cargo")
             .args([
                 "build",
@@ -735,7 +760,9 @@ fn main() -> Result<()> {
             .join(format!("{}.wasm", wasm_name));
 
         if !wasm_path.exists() {
-            eprintln!("Warning: WASM not found at {}", wasm_path);
+            if !args.quiet {
+                eprintln!("Warning: WASM not found at {}", wasm_path);
+            }
             continue;
         }
 
@@ -760,29 +787,40 @@ fn main() -> Result<()> {
         }
 
         if exported_fns.is_empty() {
-            eprintln!("No exported functions found in {}", package.name);
+            if !args.quiet {
+                eprintln!("No exported functions found in {}", package.name);
+            }
             continue;
         }
 
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✔"])
-                .template("{spinner:.green} Deploying contract {msg}...")
-                .unwrap(),
-        );
-        spinner.set_message(package.name.to_string());
-        spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+        let spinner = if args.quiet {
+            None
+        } else {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✔"])
+                    .template("{spinner:.green} Deploying contract {msg}...")
+                    .unwrap(),
+            );
+            pb.set_message(package.name.to_string());
+            pb.enable_steady_tick(std::time::Duration::from_millis(100));
+            Some(pb)
+        };
 
         let contract_id =
             deploy_contract_with_retry(wasm_path.as_std_path(), &source, &network, &package.name)?;
 
-        spinner.finish_and_clear();
+        if let Some(spinner) = spinner {
+            spinner.finish_and_clear();
+        }
 
         eprintln!("Contract deployed at: {}", contract_id);
 
         for function in exported_fns {
-            eprintln!("Simulating function '{}'...", function);
+            if !args.quiet {
+                eprintln!("Simulating function '{}'...", function);
+            }
 
             let func_config = toml_config.functions.get(&function);
             let func_args = func_config.map(|c| c.args.clone()).unwrap_or_default();
@@ -819,18 +857,23 @@ fn main() -> Result<()> {
                 }
                 SimulationOutcome::Failed(failure) => {
                     has_errors = true;
-                    match failure {
-                        SimulationFailure::Invoke(stderr) => {
-                            eprintln!("Warning: Simulation failed for {}: {}", function, stderr);
-                        }
-                        SimulationFailure::Rpc(error) => {
-                            eprintln!("Warning: RPC error for {}: {}", function, error);
-                        }
-                        SimulationFailure::MetricsExtraction(err) => {
-                            eprintln!(
-                                "Warning: Failed to extract metrics for {}: {}",
-                                function, err
-                            );
+                    if !args.quiet {
+                        match &failure {
+                            SimulationFailure::Invoke(stderr) => {
+                                eprintln!(
+                                    "Warning: Simulation failed for {}: {}",
+                                    function, stderr
+                                );
+                            }
+                            SimulationFailure::Rpc(error) => {
+                                eprintln!("Warning: RPC error for {}: {}", function, error);
+                            }
+                            SimulationFailure::MetricsExtraction(err) => {
+                                eprintln!(
+                                    "Warning: Failed to extract metrics for {}: {}",
+                                    function, err
+                                );
+                            }
                         }
                     }
                     if let (true, Some(fc)) = (args.check, func_config) {
@@ -847,7 +890,9 @@ fn main() -> Result<()> {
     }
 
     if reports.is_empty() {
-        eprintln!("No successful simulations to report.");
+        if !args.quiet {
+            eprintln!("No successful simulations to report.");
+        }
         if has_errors || (args.check && checks_failed) {
             std::process::exit(1);
         }
