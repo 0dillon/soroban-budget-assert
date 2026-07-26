@@ -1,112 +1,10 @@
 {
   "generators": {
-    "address": 2,
+    "address": 1,
     "nonce": 0
   },
   "auth": [
-    [],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CBKMUZNFQIAL775XBB2W2GP5CNHBM5YGH6C3XB7AY6SUVO2IBU3VYK2V",
-              "function_name": "deposit",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000
-                  }
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CBKMUZNFQIAL775XBB2W2GP5CNHBM5YGH6C3XB7AY6SUVO2IBU3VYK2V",
-              "function_name": "swap",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "bool": true
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 100
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 90
-                  }
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CBKMUZNFQIAL775XBB2W2GP5CNHBM5YGH6C3XB7AY6SUVO2IBU3VYK2V",
-              "function_name": "withdraw",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 900
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 900
-                  }
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ]
+    []
   ],
   "ledger": {
     "protocol_version": 22,
@@ -154,105 +52,6 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 1033654523790656264
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 4837995959683129791
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 4837995959683129791
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 5541220902715666415
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 5541220902715666415
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
             "contract": "CBKMUZNFQIAL775XBB2W2GP5CNHBM5YGH6C3XB7AY6SUVO2IBU3VYK2V",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
@@ -275,68 +74,311 @@
                     "storage": [
                       {
                         "key": {
-                          "symbol": "balA"
+                          "symbol": "vec"
                         },
                         "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 9090
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "balB"
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 8911
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "lpBl"
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 9000
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "resA"
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 9090
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "resB"
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 8911
-                          }
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "shares"
-                        },
-                        "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 9000
-                          }
+                          "vec": [
+                            {
+                              "u32": 0
+                            },
+                            {
+                              "u32": 1
+                            },
+                            {
+                              "u32": 2
+                            },
+                            {
+                              "u32": 3
+                            },
+                            {
+                              "u32": 4
+                            },
+                            {
+                              "u32": 5
+                            },
+                            {
+                              "u32": 6
+                            },
+                            {
+                              "u32": 7
+                            },
+                            {
+                              "u32": 8
+                            },
+                            {
+                              "u32": 9
+                            },
+                            {
+                              "u32": 10
+                            },
+                            {
+                              "u32": 11
+                            },
+                            {
+                              "u32": 12
+                            },
+                            {
+                              "u32": 13
+                            },
+                            {
+                              "u32": 14
+                            },
+                            {
+                              "u32": 15
+                            },
+                            {
+                              "u32": 16
+                            },
+                            {
+                              "u32": 17
+                            },
+                            {
+                              "u32": 18
+                            },
+                            {
+                              "u32": 19
+                            },
+                            {
+                              "u32": 20
+                            },
+                            {
+                              "u32": 21
+                            },
+                            {
+                              "u32": 22
+                            },
+                            {
+                              "u32": 23
+                            },
+                            {
+                              "u32": 24
+                            },
+                            {
+                              "u32": 25
+                            },
+                            {
+                              "u32": 26
+                            },
+                            {
+                              "u32": 27
+                            },
+                            {
+                              "u32": 28
+                            },
+                            {
+                              "u32": 29
+                            },
+                            {
+                              "u32": 30
+                            },
+                            {
+                              "u32": 31
+                            },
+                            {
+                              "u32": 32
+                            },
+                            {
+                              "u32": 33
+                            },
+                            {
+                              "u32": 34
+                            },
+                            {
+                              "u32": 35
+                            },
+                            {
+                              "u32": 36
+                            },
+                            {
+                              "u32": 37
+                            },
+                            {
+                              "u32": 38
+                            },
+                            {
+                              "u32": 39
+                            },
+                            {
+                              "u32": 40
+                            },
+                            {
+                              "u32": 41
+                            },
+                            {
+                              "u32": 42
+                            },
+                            {
+                              "u32": 43
+                            },
+                            {
+                              "u32": 44
+                            },
+                            {
+                              "u32": 45
+                            },
+                            {
+                              "u32": 46
+                            },
+                            {
+                              "u32": 47
+                            },
+                            {
+                              "u32": 48
+                            },
+                            {
+                              "u32": 49
+                            },
+                            {
+                              "u32": 50
+                            },
+                            {
+                              "u32": 51
+                            },
+                            {
+                              "u32": 52
+                            },
+                            {
+                              "u32": 53
+                            },
+                            {
+                              "u32": 54
+                            },
+                            {
+                              "u32": 55
+                            },
+                            {
+                              "u32": 56
+                            },
+                            {
+                              "u32": 57
+                            },
+                            {
+                              "u32": 58
+                            },
+                            {
+                              "u32": 59
+                            },
+                            {
+                              "u32": 60
+                            },
+                            {
+                              "u32": 61
+                            },
+                            {
+                              "u32": 62
+                            },
+                            {
+                              "u32": 63
+                            },
+                            {
+                              "u32": 64
+                            },
+                            {
+                              "u32": 65
+                            },
+                            {
+                              "u32": 66
+                            },
+                            {
+                              "u32": 67
+                            },
+                            {
+                              "u32": 68
+                            },
+                            {
+                              "u32": 69
+                            },
+                            {
+                              "u32": 70
+                            },
+                            {
+                              "u32": 71
+                            },
+                            {
+                              "u32": 72
+                            },
+                            {
+                              "u32": 73
+                            },
+                            {
+                              "u32": 74
+                            },
+                            {
+                              "u32": 75
+                            },
+                            {
+                              "u32": 76
+                            },
+                            {
+                              "u32": 77
+                            },
+                            {
+                              "u32": 78
+                            },
+                            {
+                              "u32": 79
+                            },
+                            {
+                              "u32": 80
+                            },
+                            {
+                              "u32": 81
+                            },
+                            {
+                              "u32": 82
+                            },
+                            {
+                              "u32": 83
+                            },
+                            {
+                              "u32": 84
+                            },
+                            {
+                              "u32": 85
+                            },
+                            {
+                              "u32": 86
+                            },
+                            {
+                              "u32": 87
+                            },
+                            {
+                              "u32": 88
+                            },
+                            {
+                              "u32": 89
+                            },
+                            {
+                              "u32": 90
+                            },
+                            {
+                              "u32": 91
+                            },
+                            {
+                              "u32": 92
+                            },
+                            {
+                              "u32": 93
+                            },
+                            {
+                              "u32": 94
+                            },
+                            {
+                              "u32": 95
+                            },
+                            {
+                              "u32": 96
+                            },
+                            {
+                              "u32": 97
+                            },
+                            {
+                              "u32": 98
+                            },
+                            {
+                              "u32": 99
+                            }
+                          ]
                         }
                       }
                     ]
@@ -389,48 +431,5 @@
       ]
     ]
   },
-  "events": [
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "54ca65a58200bfffb708756d19fd134e1677063f85bb87e0c7a54abb480d375c",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "string": "withdraw"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1010
-                  }
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 990
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    }
-  ]
+  "events": []
 }
