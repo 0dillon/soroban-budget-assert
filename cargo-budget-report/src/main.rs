@@ -326,10 +326,7 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
     }
 
     if let Some(error) = rpc_response.get("result").and_then(|r| r.get("error")) {
-        let err_msg = error.as_str().unwrap_or_else(|| {
-            // Fallback for non-string error (shouldn't happen in valid JSON-RPC, but just in case)
-            ""
-        });
+        let err_msg = error.as_str().unwrap_or("");
         if !err_msg.is_empty() {
             anyhow::bail!("{}", err_msg);
         } else {
