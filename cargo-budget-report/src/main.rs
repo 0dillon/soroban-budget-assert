@@ -681,7 +681,7 @@ fn main() -> Result<()> {
     let mut has_errors = false;
     let mut checks_failed = false;
 
-    for package in metadata.packages {
+    for package in &metadata.packages {
         let is_cdylib = package
             .targets
             .iter()
