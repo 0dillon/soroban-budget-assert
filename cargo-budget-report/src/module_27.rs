@@ -78,8 +78,14 @@ mod bitwise_and_numeric_tests {
         // A single decimal digit has no group boundary, so no comma is
         // inserted.  The reverse-then-re-reverse path is a no-op for a
         // one-character string.
-        assert_eq!(format_with_commas_and_units(0, "CPU Instructions"), "0 inst.");
-        assert_eq!(format_with_commas_and_units(1, "CPU Instructions"), "1 inst.");
+        assert_eq!(
+            format_with_commas_and_units(0, "CPU Instructions"),
+            "0 inst."
+        );
+        assert_eq!(
+            format_with_commas_and_units(1, "CPU Instructions"),
+            "1 inst."
+        );
         assert_eq!(format_with_commas_and_units(9, "Read Bytes"), "9 B");
     }
 
@@ -89,7 +95,10 @@ mod bitwise_and_numeric_tests {
         // receive a leading comma: `digit_count` reaches 3 only *after* the
         // third digit has already been pushed, so the comma is inserted before
         // the *fourth* digit (if one exists).
-        assert_eq!(format_with_commas_and_units(999, "CPU Instructions"), "999 inst.");
+        assert_eq!(
+            format_with_commas_and_units(999, "CPU Instructions"),
+            "999 inst."
+        );
         assert_eq!(format_with_commas_and_units(100, "Write Bytes"), "100 B");
     }
 
@@ -107,8 +116,14 @@ mod bitwise_and_numeric_tests {
         //   digit 0 → push '0', count=3 → count resets to 0, comma pushed
         //   digit 1 → push '1', count=1
         //   accumulated = "000,1"  →  reversed = "1,000"
-        assert_eq!(format_with_commas_and_units(1_000, "CPU Instructions"), "1,000 inst.");
-        assert_eq!(format_with_commas_and_units(9_999, "CPU Instructions"), "9,999 inst.");
+        assert_eq!(
+            format_with_commas_and_units(1_000, "CPU Instructions"),
+            "1,000 inst."
+        );
+        assert_eq!(
+            format_with_commas_and_units(9_999, "CPU Instructions"),
+            "9,999 inst."
+        );
     }
 
     #[test]
@@ -168,7 +183,10 @@ mod bitwise_and_numeric_tests {
         // Any metric name that does *not* contain "Bytes" falls through to the
         // `inst.` branch — including the empty string, which the test below
         // confirms for defensive coverage.
-        assert_eq!(format_with_commas_and_units(42, "CPU Instructions"), "42 inst.");
+        assert_eq!(
+            format_with_commas_and_units(42, "CPU Instructions"),
+            "42 inst."
+        );
         assert_eq!(format_with_commas_and_units(42, ""), "42 inst.");
     }
 
