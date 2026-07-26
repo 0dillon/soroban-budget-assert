@@ -1256,7 +1256,10 @@ mod tests {
             "extraction should fail on malformed response"
         );
         let err = format!("{:#}", result.unwrap_err());
-        assert!(err.contains("No transaction data available"), "Expected specific error message");
+        assert!(
+            err.contains("No transaction data available"),
+            "Expected specific error message"
+        );
     }
 
     #[test]
@@ -1265,7 +1268,8 @@ mod tests {
             .join("fixtures")
             .join("simulate_transaction_response_cpu_exceeded.json");
         let fixture_json: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&fixture_path).expect("failed to read cpu exceeded fixture file"),
+            &std::fs::read_to_string(&fixture_path)
+                .expect("failed to read cpu exceeded fixture file"),
         )
         .expect("failed to parse cpu exceeded JSON");
 
@@ -1275,7 +1279,11 @@ mod tests {
             "extraction should fail on cpu exceeded response"
         );
         let err = format!("{:#}", result.unwrap_err());
-        assert!(err.contains("CPU budget exceeded"), "Expected error to mention CPU budget exceeded, got: {}", err);
+        assert!(
+            err.contains("CPU budget exceeded"),
+            "Expected error to mention CPU budget exceeded, got: {}",
+            err
+        );
     }
 
     #[test]
