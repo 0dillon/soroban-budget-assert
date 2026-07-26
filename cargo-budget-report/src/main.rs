@@ -529,15 +529,7 @@ fn run_preflight_checks() -> Result<()> {
     Ok(())
 }
 
-/// Deploys a contract WASM to the network with automatic retry on
-/// friendbot-related transient failures.
-///
-/// The `stellar contract deploy` command implicitly triggers friendbot
-/// funding for the source account on testnet. Friendbot may return 429
-/// (rate-limited) or the account may not be confirmed on-ledger yet.
-/// This function makes up to `MAX_DEPLOY_ATTEMPTS` total attempts with
-/// exponential backoff before giving up.
-
+/// Loads the contract ID cache from `.budget-cache.toml`.
 fn load_cache() -> BudgetCache {
     std::fs::read_to_string(CACHE_FILE)
         .ok()
@@ -594,6 +586,14 @@ fn get_contract_id_for_package(
     Ok(contract_id)
 }
 
+/// Deploys a contract WASM to the network with automatic retry on
+/// friendbot-related transient failures.
+///
+/// The `stellar contract deploy` command implicitly triggers friendbot
+/// funding for the source account on testnet. Friendbot may return 429
+/// (rate-limited) or the account may not be confirmed on-ledger yet.
+/// This function makes up to `MAX_DEPLOY_ATTEMPTS` total attempts with
+/// exponential backoff before giving up.
 fn deploy_contract_with_retry(
     wasm_path: &Path,
     source: &str,
