@@ -18,6 +18,13 @@ struct BudgetSpec {
     env_ident: Option<Ident>,
 }
 
+/// Parses the attribute arguments for `budget_cpu_lt` / `budget_mem_lt`
+/// into a concrete [`BudgetLimit`] value.
+///
+/// Accepted forms:
+/// - An integer literal (e.g. `950_000`).
+/// - `env = "VAR_NAME"` to read the limit from an environment variable.
+/// - `config = "key"` to read the limit from a `budget.json` file.
 impl Parse for BudgetLimit {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Ident) {
