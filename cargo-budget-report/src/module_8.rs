@@ -431,6 +431,7 @@ mod off_by_one_and_zero_length_tests {
     // These tests create a temporary working directory and change the
     // process CWD into it so that `scaffold_init`'s hard-coded
     // `Path::new("budget.toml")` does not clobber the real project file.
+    // A shared lock prevents races with other CWD-mutating tests.
 
     /// Change into a newly-created temp directory and return the old CWD
     /// so the caller can restore it with [`restore_cwd`].
@@ -448,9 +449,12 @@ mod off_by_one_and_zero_length_tests {
 
     #[test]
     fn scaffold_init_creates_file_when_not_exists() {
+        let _guard = crate::TEST_CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (_tmp, prev) = isolate_temp_dir();
 
-        let result = scaffold_init(false);
+        let result = scaffold_init(false, false);
         assert!(result.is_ok());
         assert!(
             std::path::Path::new("budget.toml").exists(),
@@ -469,10 +473,13 @@ mod off_by_one_and_zero_length_tests {
 
     #[test]
     fn scaffold_init_errors_when_exists_without_force() {
+        let _guard = crate::TEST_CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (_tmp, prev) = isolate_temp_dir();
         std::fs::write("budget.toml", "existing data").unwrap();
 
-        let result = scaffold_init(false);
+        let result = scaffold_init(false, false);
         assert!(result.is_err());
         let err = format!("{:#}", result.as_ref().unwrap_err());
         assert!(
@@ -492,10 +499,13 @@ mod off_by_one_and_zero_length_tests {
 
     #[test]
     fn scaffold_init_overwrites_with_force_flag() {
+        let _guard = crate::TEST_CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (_tmp, prev) = isolate_temp_dir();
         std::fs::write("budget.toml", "existing data").unwrap();
 
-        let result = scaffold_init(true);
+        let result = scaffold_init(true, false);
         assert!(result.is_ok());
 
         let content = std::fs::read_to_string("budget.toml").unwrap();
