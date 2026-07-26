@@ -4,6 +4,13 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse::Parse, parse::ParseStream, Ident, ItemFn, LitInt, LitStr, Token};
 
+/// Specifies the source of a budget limit value for the `budget_cpu_lt` and
+/// `budget_mem_lt` attribute macros.
+///
+/// A limit can be:
+/// - A **static integer literal** (e.g. `950_000`).
+/// - Read from an **environment variable** at test runtime (`env = "VAR_NAME"`).
+/// - Read from a **JSON config file** (`config = "key"`).
 enum BudgetLimit {
     Int(u64),
     EnvVar(String),
@@ -11,11 +18,23 @@ enum BudgetLimit {
     // TODO: Add support for parsing a default value if the env var is missing
 }
 
+/// The type of resource metric being asserted by a budget macro.
+///
+/// Each variant maps to a specific method on the Soroban `Budget` type:
+/// - `CpuInstructionCost` → `budget.cpu_instruction_cost()`
+/// - `MemoryBytesCost` → `budget.memory_bytes_cost()`
 enum BudgetMetric {
     CpuInstructionCost,
     MemoryBytesCost,
 }
 
+/// Parses the attribute arguments for `budget_cpu_lt` / `budget_mem_lt`
+/// into a concrete [`BudgetLimit`] value.
+///
+/// Accepted forms:
+/// - An integer literal (e.g. `950_000`).
+/// - `env = "VAR_NAME"` to read the limit from an environment variable.
+/// - `config = "key"` to read the limit from a `budget.json` file.
 impl Parse for BudgetLimit {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(Ident) {
@@ -37,6 +56,22 @@ impl Parse for BudgetLimit {
     }
 }
 
+/// Core code-generation routine shared by `budget_cpu_lt` and `budget_mem_lt`.
+///
+/// Parses the attribute arguments into a [`BudgetLimit`], wraps the
+/// original test function body so that after execution the budget is
+/// queried and an assertion is emitted against the configured limit.
+///
+/// The generated code includes inline helper closures for resolving
+/// environment variables and parsing `budget.json` config values so that
+/// the macro output is self-contained and requires no additional runtime
+/// dependencies.
+///
+/// # Arguments
+///
+/// * `attr` - The token stream from the attribute macro invocation.
+/// * `item` - The token stream of the annotated function.
+/// * `metric` - Which resource metric to assert against.
 fn generate_budget_assert(
     attr: TokenStream,
     item: TokenStream,
