@@ -765,7 +765,7 @@ fn main() -> Result<()> {
             &wasm_bytes,
             &network,
             &source,
-            &wasm_path,
+            wasm_path.as_std_path(),
             force_deploy,
             &mut cache,
         )?;
@@ -862,7 +862,11 @@ fn main() -> Result<()> {
         if !unknown_pkgs.is_empty() {
             anyhow::bail!(
                 "Unknown package(s): {}\nAvailable cdylib packages: {}",
-                unknown_pkgs.join(", "),
+                unknown_pkgs
+                    .iter()
+                    .map(|p| p.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 cdylib_names.join(", ")
             );
         }
