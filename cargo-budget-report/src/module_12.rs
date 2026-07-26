@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 fn validate_in_list(
     value: &str,
     list: &[&str],
