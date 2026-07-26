@@ -53,6 +53,30 @@ fn test_budget_wasm() {
     println!("Memory bytes: {}", budget.memory_bytes_cost());
 }
 
+/// Measures CPU instruction cost of `do_expensive_work` across multiple input
+/// sizes in WASM mode, for gap-vs-input-size analysis.
+#[test]
+fn test_measure_gap_vs_input_size() {
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
+    let wasm = std::fs::read(wasm_path).expect("WASM file not found");
+    let sizes = [1000, 10000, 50000, 100000];
+
+    for &n in &sizes {
+        // --- Wasm measurement ---
+        let env = Env::default();
+        #[allow(deprecated)]
+        let contract_id = env.register_contract_wasm(None, wasm.as_slice());
+        let client = ConstantProductPoolClient::new(&env, &contract_id);
+        env.cost_estimate().budget().reset_unlimited();
+        client.do_expensive_work(&n);
+        let wasm_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        println!(
+            "  n={:>6} | local WASM CPU: {:>10}",
+            n, wasm_cpu
+        );
+    }
+}
+
 #[test]
 #[budget_cpu_lt(2500000)] // Re-measured: WASM local 2307555, simulates deposit+swap+withdraw
 fn test_budget_macro_gated() {
