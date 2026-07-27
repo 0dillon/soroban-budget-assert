@@ -325,6 +325,15 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
         anyhow::bail!("{}", error);
     }
 
+    if let Some(error) = rpc_response.get("result").and_then(|r| r.get("error")) {
+        let err_msg = error.as_str().unwrap_or("");
+        if !err_msg.is_empty() {
+            anyhow::bail!("{}", err_msg);
+        } else {
+            anyhow::bail!("{}", error);
+        }
+    }
+
     let tx_data_b64 = rpc_response["result"]["transactionData"]
         .as_str()
         .context("No transactionData found in simulateTransaction response.")?;
@@ -1242,6 +1251,35 @@ mod tests {
         assert!(
             result.is_err(),
             "extraction should fail on malformed response"
+        );
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("No transaction data available"),
+            "Expected specific error message"
+        );
+    }
+
+    #[test]
+    fn extract_metrics_from_cpu_exceeded_fixture_file() {
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join("simulate_transaction_response_cpu_exceeded.json");
+        let fixture_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&fixture_path)
+                .expect("failed to read cpu exceeded fixture file"),
+        )
+        .expect("failed to parse cpu exceeded JSON");
+
+        let result = extract_metrics(&fixture_json);
+        assert!(
+            result.is_err(),
+            "extraction should fail on cpu exceeded response"
+        );
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("CPU budget exceeded"),
+            "Expected error to mention CPU budget exceeded, got: {}",
+            err
         );
     }
 
