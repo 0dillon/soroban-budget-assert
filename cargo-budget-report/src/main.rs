@@ -1565,12 +1565,12 @@ fn main() -> anyhow::Result<()> {
                                     function, err
                                 );
                             }
-                        }
-                        SimulationFailure::Spawn(err) => {
-                            eprintln!(
-                                "Warning: Subprocess error for {}: {}",
-                                function, err
-                            );
+                            SimulationFailure::Spawn(err) => {
+                                eprintln!(
+                                    "Warning: Subprocess error for {}: {}",
+                                    function, err
+                                );
+                            }
                         }
                     }
                     if let (true, Some(function_config)) = (args.check, func_config) {
