@@ -1,9 +1,7 @@
-use crate::derive::{self, DerivationConfig, Margin};
-use crate::module_10::{Error, Result, SimulationFailure, SimulationOutcome};
 use anyhow::Context;
 mod compare;
 
-use anyhow::{Context, Result};
+use crate::module_10::{Error, Result, SimulationFailure, SimulationOutcome};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use compare::{
@@ -568,32 +566,6 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
 ///
 /// Each variant corresponds to a different failure point in the
 /// `stellar contract invoke --build-only` → `simulateTransaction` pipeline.
-enum SimulationFailure {
-    /// `stellar contract invoke --build-only` exited non-zero.
-    Invoke(String),
-    /// The RPC `simulateTransaction` response contained an `"error"` field.
-    Rpc(String),
-    /// The RPC response didn't contain a decodable `SorobanTransactionData`.
-    MetricsExtraction(String),
-    /// A spawn or IO error on the `stellar`/`curl` subprocess itself
-    /// (not a failure returned *by* the subprocess).
-    Spawn(String),
-}
-
-/// Outcome of simulating one exported function.
-///
-/// Distinguishes between a successful simulation (with extracted resource
-/// metrics) and a recoverable failure so the caller can continue iterating
-/// over remaining functions instead of aborting the entire report.
-enum SimulationOutcome {
-    Metrics {
-        instructions: u32,
-        read_bytes: u32,
-        write_bytes: u32,
-    },
-    Failed(SimulationFailure),
-}
-
 /// Builds the `stellar contract invoke --build-only -- <function> [args..]`
 /// argument list for one exported function.
 ///
@@ -1577,7 +1549,12 @@ fn main() -> anyhow::Result<()> {
                         // a check failure even if no `*_limit` is set on
                         // this row of budget.toml.
                         checks_failed = true;
-                        emit_check_failure_entries(&mut reports, &package.name, function, fc);
+                        emit_check_failure_entries(
+                            &mut reports,
+                            &package.name,
+                            function,
+                            function_config,
+                        );
                     }
                 }
             }
