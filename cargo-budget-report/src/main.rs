@@ -6,6 +6,8 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
+
+
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -61,7 +63,7 @@ write_limit = 1000
 "#;
 
 /// Top-level CLI entry point for `cargo budget-report`.
-///
+
 /// Wraps the binary in a `cargo <subcommand>` compatible enum so it can be
 /// invoked as `cargo budget-report [OPTIONS]`.
 #[derive(Parser, Debug)]
