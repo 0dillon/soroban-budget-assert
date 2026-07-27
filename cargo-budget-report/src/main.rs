@@ -792,10 +792,7 @@ fn main() -> Result<()> {
                     ) {
                         Ok(outcome) => outcome,
                         Err(e) => {
-                            SimulationOutcome::Failed(SimulationFailure::Spawn(format!(
-                                "{:#}",
-                                e
-                            )))
+                            SimulationOutcome::Failed(SimulationFailure::Spawn(format!("{:#}", e)))
                         }
                     };
 
@@ -812,8 +809,10 @@ fn main() -> Result<()> {
 
         // Sort by original enumeration order so report output is
         // deterministic.
-        let mut ordered_results =
-            Arc::try_unwrap(results_mutex).unwrap().into_inner().unwrap();
+        let mut ordered_results = Arc::try_unwrap(results_mutex)
+            .unwrap()
+            .into_inner()
+            .unwrap();
         ordered_results.sort_by_key(|(i, _)| *i);
 
         for (i, outcome) in ordered_results {
@@ -866,10 +865,7 @@ fn main() -> Result<()> {
                             );
                         }
                         SimulationFailure::Spawn(err) => {
-                            eprintln!(
-                                "Warning: Subprocess error for {}: {}",
-                                function, err
-                            );
+                            eprintln!("Warning: Subprocess error for {}: {}", function, err);
                         }
                     }
                     if let (true, Some(fc)) = (args.check, func_config) {
