@@ -30,6 +30,26 @@ args = ["--n", "10000"]
 ```
 {% endcode %}
 
+Add the release profile used for reproducible Soroban cost measurements to the same workspace root `Cargo.toml`:
+
+{% code title="Cargo.toml" %}
+```toml
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+```
+{% endcode %}
+
+{% hint style="warning" %}
+The release profile is part of the measurement. `cargo budget-report` builds the WASM with `--release`, and these settings change the binary that is deployed, simulated, and loaded by local WASM tests. Size optimization, LTO, and single-codegen-unit builds change generated instructions; aborting panics removes unwinding code; stripping symbols and disabling debug info change artifact size; release assertions match production behavior; and overflow checks keep arithmetic checks explicit. Numbers measured under another profile are not comparable to this project's published figures.
+{% endhint %}
+
 ## Step 3: Measure network resource usage
 
 ```bash
@@ -73,7 +93,7 @@ Two details matter:
 - **`reset_unlimited()` before the call**, so the default test budget doesn't cap the measurement.
 {% endhint %}
 
-Re-measure (Steps 3–4) whenever you change the release profile or bump the SDK — both shift local and network costs, and not by the same amount.
+Re-measure (Steps 3–4) whenever you change the release profile or bump the SDK — both shift local and network costs, and not by the same amount. A useful follow-up for the tool would be to warn when a workspace lacks the release profile above; this guide only documents the requirement.
 
 ## Step 5: Block regressions in CI
 
