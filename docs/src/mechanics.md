@@ -7,7 +7,7 @@ Every Soroban transaction runs against a resource budget. If the budget is exhau
 The raw figures and deltas are recorded in the [measurements file](../../MEASUREMENTS.md), which is the single source of truth for empirical cost data across the project. The same page documents the methodology, the build profiles tested, and the operation types not yet measured.
 
 {% hint style="info" %}
-The direction of the WASM gap is not stable — see the two build profiles compared in the [existing measurements](../../MEASUREMENTS.md#cpu-instructions).
+The direction of the WASM gap is not stable — see the two build profiles compared in the [existing measurements](../../MEASUREMENTS.md#cpu-instructions), and the [SDK version calibration](../../MEASUREMENTS.md#sdk-version-calibration) which tracks how the gap shifts across soroban-sdk versions.
 {% endhint %}
 
 Two conclusions drive the tool's design:
@@ -82,7 +82,9 @@ These three figures are resource *amounts*, and they are inputs to the non-refun
 
 ## How the tiers work together
 
-Tier B tells you what a function really costs on the network. Tier A pins the *local* estimate into your test suite: measure once, assert a limit a few percent above the measured local number, and any change that pushes execution cost past it fails CI before it reaches the network. The example contract's gated test uses exactly this pattern: local WASM estimate 901,816, asserted limit 950,000, real testnet cost 756,678 known from Tier B.
+Tier B tells you what a function really costs on the network. Tier A pins the *local* estimate into your test suite: measure once, assert a limit a few percent above the measured local number, and any change that pushes execution cost past it fails CI before it reaches the network. The example contract's gated test uses exactly this pattern: local WASM estimate 2,654,615, asserted limit 2,800,000, real testnet cost (placeholder — see [SDK version calibration](../../MEASUREMENTS.md#sdk-version-calibration)).
+
+> **Warning:** The local WASM estimate shifts with soroban-sdk version. The SDK version calibration table in [MEASUREMENTS.md](../../MEASUREMENTS.md#sdk-version-calibration) should be regenerated on every SDK bump so Tier A limits are based on current numbers, not stale ones.
 
 ## ⚙️ Supported Versions & Compatibility
 
