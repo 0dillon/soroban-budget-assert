@@ -392,6 +392,8 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
         .as_str()
         .ok_or_else(|| Error::MissingField("transactionData".into()))?;
 
+    // Decode the transaction data natively using the stellar-xdr crate
+    // to avoid the overhead and instability of shelling out to the stellar CLI.
     let tx_data = SorobanTransactionData::from_xdr_base64(tx_data_b64, Limits::none())
         .map_err(|e| Error::Xdr(format!("Failed to decode SorobanTransactionData: {}", e)))?;
 
