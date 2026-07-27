@@ -33,7 +33,7 @@ fn fake_bin_dir() -> PathBuf {
 /// Recursively copies `src` into `dst`, creating `dst` if needed.
 ///
 /// The mock workspace is copied into a fresh tempdir per test because
-/// `cargo build` writes `Cargo.lock` and `target/` into its working
+/// `cargo build` writes Cargo.lock and target/ into its working
 /// directory; running in place would leave build artifacts next to the
 /// checked-in fixture.
 fn copy_dir_all(src: &Path, dst: &Path) {
@@ -94,6 +94,61 @@ fn discovers_mock_workspace_and_reports_cleanly() {
     assert!(stdout.contains("1,000,000 inst."), "got: {stdout}");
     assert!(stdout.contains("2,048 B"), "got: {stdout}");
     assert!(stdout.contains("4,096 B"), "got: {stdout}");
+}
+
+#[test]
+fn function_filter_reports_only_the_selected_function() {
+    let workspace = setup_mock_workspace();
+
+    let assert = budget_report_cmd(workspace.path())
+        .args([
+            "budget-report",
+            "--network",
+            "local",
+            "--source",
+            "alice",
+            "--function",
+            "ping",
+        ])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("mock-contract-a::ping"), "got: {stdout}");
+    assert!(!stdout.contains("mock-contract-b::pong"), "got: {stdout}");
+}
+
+#[test]
+fn json_function_filter_reports_only_the_selected_function() {
+    let workspace = setup_mock_workspace();
+
+    let assert = budget_report_cmd(workspace.path())
+        .args([
+            "budget-report",
+            "--network",
+            "local",
+            "--source",
+            "alice",
+            "--function",
+            "ping",
+            "--json",
+        ])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let reports: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let reports = reports.as_array().expect("report should be a JSON array");
+
+    assert!(!reports.is_empty(), "the selected function should be reported");
+    assert!(
+        reports.iter().all(|report| {
+            report["package"] == "mock-contract-a" && report["function"] == "ping"
+        }),
+        "all JSON entries should belong to mock-contract-a::ping, got: {reports:?}"
+    );
 }
 
 #[test]
