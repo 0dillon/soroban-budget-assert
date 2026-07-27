@@ -312,6 +312,7 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
 /// Why simulating a single exported function did not produce metrics.
 /// Carries the same text the caller previously logged inline, so extracting
 /// this out of the main loop doesn't change any user-facing diagnostics.
+#[derive(Debug)]
 enum SimulationFailure {
     /// `stellar contract invoke --build-only` exited non-zero.
     Invoke(String),
@@ -325,6 +326,7 @@ enum SimulationFailure {
 }
 
 /// Outcome of simulating one exported function.
+#[derive(Debug)]
 enum SimulationOutcome {
     Metrics {
         instructions: u32,
