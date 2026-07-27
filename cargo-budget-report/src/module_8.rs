@@ -114,6 +114,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            tolerance: None,
         };
         assert_eq!(
             limit_for_metric(&config, "CPU Instructions"),
@@ -128,6 +129,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "Read Bytes"), Some(1_000));
     }
@@ -139,6 +141,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "Write Bytes"), Some(500));
     }
@@ -150,6 +153,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            tolerance: None,
         };
         // An empty or unknown metric string should return None.
         assert_eq!(limit_for_metric(&config, ""), None);
@@ -162,6 +166,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "WASM Bytes"), None);
         assert_eq!(limit_for_metric(&config, "Unknown Metric"), None);
@@ -174,6 +179,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: None,
             read_limit: None,
             write_limit: None,
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "CPU Instructions"), None);
         assert_eq!(limit_for_metric(&config, "Read Bytes"), None);
@@ -303,6 +309,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "my-pkg", "do_work", &config);
         assert_eq!(reports.len(), 3);
@@ -316,6 +323,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: Some(500),
+            tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "my-pkg", "do_work", &config);
         for r in &reports {
@@ -616,6 +624,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, " CPU Instructions"), None);
         assert_eq!(limit_for_metric(&config, "  Read Bytes"), None);
@@ -628,6 +637,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "CPU Instructions "), None);
         assert_eq!(limit_for_metric(&config, "Write Bytes\t"), None);
@@ -640,6 +650,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            tolerance: None,
         };
         // The function should do exact case-sensitive matching.
         assert_eq!(limit_for_metric(&config, "cpu instructions"), None);
@@ -741,6 +752,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: Some(500),
+            tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "pkg", "fn", &config);
         assert_eq!(reports.len(), 3);

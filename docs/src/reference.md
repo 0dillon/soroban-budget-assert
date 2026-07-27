@@ -321,7 +321,12 @@ Read from the directory the command runs in (the workspace root):
 network = "testnet"
 source = "alice"
 
-# Per-function invoke arguments, passed to `stellar contract invoke -- <fn> <args>`
+# Default tolerance for regressions on `--check-baseline`. Functions may
+# override this with their own `tolerance`. Accepts the same forms as
+# `--tolerance`: either a fraction (0.10) or a percentage ("10%").
+tolerance = 0.10
+
+# Per-function invoke arguments, passed to `stellar contract invoke -- <fn> <args>`.
 [functions.do_expensive_work]
 args = ["--n", "10000"]
 

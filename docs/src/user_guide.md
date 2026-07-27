@@ -89,6 +89,45 @@ Build the WASM, then run the tests, on every push and pull request:
 
 If a change pushes a function past its asserted budget, the test fails with the actual cost and the limit in the message. Re-run `cargo budget-report` to re-measure, then either optimize the function or consciously raise the limit.
 
+## Step 6 (optional): Catch regressions on the workspace with a baseline
+
+The Tier A macros above catch local estimation regressions on a single function at test time. To catch *network-cost* regressions across the whole workspace (without requiring a unit test per function), record a baseline on your trunk branch and check against it on PRs.
+
+On `main` (or whatever trunk you want to gate against), record the baseline:
+
+```bash
+cargo budget-report --record-baseline
+```
+
+Commit the resulting `budget-baseline.toml`. It looks like:
+
+```toml
+[amm-pool-contract.do_expensive_work]
+cpu_instructions = 756678
+read_bytes      = 2048
+write_bytes     = 4096
+```
+
+Section headers are sorted alphabetically; the three metric lines inside each block always appear in the same order, so a PR diff against this file only shows the values that actually moved.
+
+In CI on every pull request:
+
+```bash
+cargo budget-report --check-baseline
+```
+
+The run exits **non-zero** when any metric exceeds its allowed budget under the tolerance. The default tolerance is 10% — chosen for testnet-side variability, since simulations drift with ledger state. Tighten it per function in `budget.toml`:
+
+```toml
+tolerance = 0.10                    # global default
+
+[functions.do_expensive_work]
+args = ["--n", "10000"]
+tolerance = 0.05                    # tighter override for a known-sensitive call
+```
+
+A single bad commit can no longer ride the `--check-baseline` gate; the rest of the workflow (tier-A macros, the textual report, `--json` for scripts) is unchanged.
+
 ## ⚙️ Supported Versions & Compatibility
 
 * **Supported SDK Version**: `soroban-sdk` = `"22.0.11"` (specifically tested/resolved to `22.0.11` in `Cargo.lock`)

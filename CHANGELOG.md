@@ -44,3 +44,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 
 - The current crate version numbers declared in the workspace manifests are `0.1.0`, so the initial changelog entry uses the same version number.
+
