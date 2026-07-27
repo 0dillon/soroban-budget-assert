@@ -35,12 +35,35 @@ These figures were produced during the initial tool development and are publishe
 | Mixed compute + storage (WASM) | 901,816 | 756,678 | +19.2% | `amm-pool-contract::do_expensive_work(10_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q1 |
 | Mixed compute + storage (WASM) | 767,049 | 832,006 | −7.8% | `amm-pool-contract::do_expensive_work(10_000)` | default `release` (`opt-level=3`) | rustc 1.81 | 2025-Q1 |
 | Storage write (WASM) | 36,840 | 44,512 | −17.2% | `amm-pool-contract::write_bytes(1,024 bytes)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2026-07-26 |
+| Cross-contract call (WASM) | — | — | — | `amm-pool-contract::do_cross_contract_work(other=helper_address, n=100)` — caller invokes `HelperContract::multiply` 100× via `env.invoke_contract` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85.0 | 2026-Q3 |
+
+> **Sign-of-delta rule (issue's standing instruction).** When both figures are populated, compute `delta = (local − network) / network`. If the resulting sign contradicts the storage-write row (delta = −17.2 %, local underestimates) or the size-opt mixed-compute-and-storage row (delta = +19.2 %, local overestimates), call the contradiction out in prose directly below this row — do not smooth it over. The cross-contract call row is intentionally filled with em-dashes (`—`); both figures are pending capture. See [Cross-contract call gap measurement (in progress)](#cross-contract-call-gap-measurement-in-progress) below for the fixture path and the reproduce commands for both sides.
 
 The native Rust row is included solely to illustrate that native estimates are unreliable for budget decisions. Only WASM-mode estimates should be used for assertions.
 
 The first three rows measure the same `do_expensive_work(10_000)` function, which mixes a compute loop (`n` iterations of `wrapping_add(wrapping_mul)`) with a storage write (`Vec` of up to 100 elements written to `env.storage().instance().set`). The numbers are aggregate costs of both operations.
 
 The storage-write row isolates the `write_bytes` fixture with a 1,024-byte value. Its delta is calculated as `(36,840 − 44,512) / 44,512 = −0.1724`, so the WASM-registered local estimate is 17.2% lower than the testnet simulation for this operation and underestimates the network cost.
+
+## Cross-contract call gap measurement (in progress)
+
+The cross-contract call row in **Existing measurements → CPU instructions** is filled with em-dashes (`—`) because both the local WASM figure and the network `simulateTransaction` figure are pending capture. The fixture file plus the exact reproducer commands for both sides are checked in below. The **sign-of-delta reporting rule lives directly under the table row above** and is not repeated here — read it before adding the captured numbers.
+
+### Fixture
+
+[`cargo-budget-report/fixtures/cross_contract_benchmark.json`](cargo-budget-report/fixtures/cross_contract_benchmark.json) — same top-level shape as the storage-write fixture, with `capture.network_command` spelling out the on-chain two-deploy pattern that the in-tree `HelperContract` co-located in the same cdylib requires.
+
+### Local capture
+
+```bash
+cargo test -p amm-pool-contract test_cross_contract_wasm -- --exact --nocapture
+```
+
+Stdout to grep: `=== CROSS-CONTRACT WASM ===`, then `CPU instructions: <num>`. The `wasm32v1-none` target builds automatically from `rust-toolchain.toml`; rustc 1.85.0 is the only requirement.
+
+### Network capture
+
+Reproducer is documented verbatim in the fixture file under `capture.network_command`. The headline: on-chain reproduction requires **two** deploys of the same WASM (one caller, one helper) because `do_cross_contract_work` invokes `HelperContract::multiply` by address, and `cargo budget-report` discovers a single WASM → single contract-id mapping, so a deployed contract cannot self-invoke across module boundaries on testnet.
 
 ## SDK version calibration
 
