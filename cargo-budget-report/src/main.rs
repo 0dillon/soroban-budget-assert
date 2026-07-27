@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
@@ -22,6 +23,39 @@ const MAX_DEPLOY_ATTEMPTS: u32 = 4;
 /// Initial backoff delay between deployment retries. Doubles on each
 /// subsequent attempt (2 s → 4 s → 8 s).
 const INITIAL_RETRY_DELAY_SECS: u64 = 2;
+
+/// Default maximum number of functions to simulate concurrently.
+/// Public RPC endpoints rate-limit, so keep this conservative.
+const DEFAULT_CONCURRENCY: usize = 4;
+
+/// Simple counting semaphore for bounding concurrent work.
+struct Semaphore {
+    count: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl Semaphore {
+    fn new(count: usize) -> Self {
+        Self {
+            count: Mutex::new(count),
+            condvar: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self) {
+        let mut count = self.count.lock().unwrap();
+        while *count == 0 {
+            count = self.condvar.wait(count).unwrap();
+        }
+        *count -= 1;
+    }
+
+    fn release(&self) {
+        let mut count = self.count.lock().unwrap();
+        *count += 1;
+        self.condvar.notify_one();
+    }
+}
 
 /// Commented budget.toml template written by `cargo budget-report --init`.
 const BUDGET_TOML_TEMPLATE: &str = r#"# -- Budget report configuration ---------------------------------------------
@@ -95,6 +129,11 @@ struct BudgetReportArgs {
     /// Emit the report as CSV instead of a table or JSON.
     #[arg(long, default_value_t = false)]
     csv: bool,
+
+    /// Maximum number of contract functions to simulate concurrently.
+    /// Public RPC endpoints may rate-limit; keep this conservative.
+    #[arg(long, default_value_t = DEFAULT_CONCURRENCY)]
+    concurrency: usize,
 }
 
 #[derive(serde::Deserialize, Default, Debug)]
@@ -280,6 +319,9 @@ enum SimulationFailure {
     Rpc(String),
     /// The RPC response didn't contain a decodable `SorobanTransactionData`.
     MetricsExtraction(String),
+    /// A spawn or IO error on the `stellar`/`curl` subprocess itself
+    /// (not a failure returned *by* the subprocess).
+    Spawn(String),
 }
 
 /// Outcome of simulating one exported function.
@@ -588,6 +630,8 @@ fn main() -> Result<()> {
         .exec()
         .context("failed to execute cargo metadata")?;
 
+    let overall_start = Instant::now();
+
     let mut reports = Vec::new();
     let mut has_errors = false;
     let mut checks_failed = false;
@@ -673,20 +717,117 @@ fn main() -> Result<()> {
 
         eprintln!("Contract deployed at: {}", contract_id);
 
-        for function in exported_fns {
-            eprintln!("Simulating function '{}'...", function);
+        // ── Simulate exported functions concurrently ─────────────────
+        //
+        // Deploys are per-package and must complete before any of that
+        // package's functions are simulated.  Once the contract is on
+        // chain every exported function is independent and latency-bound
+        // (subprocess + RPC round-trip), so they are fanned out across
+        // scoped threads with a bounded semaphore.
+        //
+        // Results are collected into a Vec keyed by the original
+        // enumeration order so the report output stays deterministic
+        // regardless of completion order.
 
-            let func_config = toml_config.functions.get(&function);
-            let func_args = func_config.map(|c| c.args.clone()).unwrap_or_default();
+        let concurrency = args.concurrency.max(1);
+        let fn_count = exported_fns.len();
 
-            match simulate_function(&contract_id, &source, &network, &function, &func_args)? {
+        // Pre-compute function arguments so threads don't borrow
+        // `toml_config`.
+        let function_args: Vec<(String, Vec<String>)> = exported_fns
+            .iter()
+            .map(|f| {
+                let args = toml_config
+                    .functions
+                    .get(f)
+                    .map(|c| c.args.clone())
+                    .unwrap_or_default();
+                (f.clone(), args)
+            })
+            .collect();
+
+        if fn_count == 1 {
+            eprintln!("Simulating function '{}'...", function_args[0].0);
+        } else {
+            eprintln!(
+                "Simulating {} functions concurrently (max {})...",
+                fn_count, concurrency
+            );
+        }
+
+        let pb = ProgressBar::new(fn_count as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] \
+                     {pos}/{len} functions {msg}",
+                )
+                .unwrap()
+                .progress_chars("#>-\u{00a0}"),
+        );
+
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let results_mutex = Arc::new(Mutex::new(Vec::new()));
+
+        thread::scope(|s| {
+            for (i, (function, func_args)) in function_args.iter().enumerate() {
+                let semaphore = Arc::clone(&semaphore);
+                let results_mutex = Arc::clone(&results_mutex);
+                let pb = pb.clone();
+                let contract_id = contract_id.clone();
+                let source = source.clone();
+                let network = network.clone();
+                let function = function.clone();
+                let func_args = func_args.clone();
+
+                s.spawn(move || {
+                    semaphore.acquire();
+
+                    let outcome = match simulate_function(
+                        &contract_id,
+                        &source,
+                        &network,
+                        &function,
+                        &func_args,
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(e) => {
+                            SimulationOutcome::Failed(SimulationFailure::Spawn(format!(
+                                "{:#}",
+                                e
+                            )))
+                        }
+                    };
+
+                    semaphore.release();
+
+                    results_mutex.lock().unwrap().push((i, outcome));
+                    pb.set_message(function);
+                    pb.inc(1);
+                });
+            }
+        });
+
+        pb.finish_and_clear();
+
+        // Sort by original enumeration order so report output is
+        // deterministic.
+        let mut ordered_results =
+            Arc::try_unwrap(results_mutex).unwrap().into_inner().unwrap();
+        ordered_results.sort_by_key(|(i, _)| *i);
+
+        for (i, outcome) in ordered_results {
+            let function = &function_args[i].0;
+            let func_config = toml_config.functions.get(function);
+
+            match outcome {
                 SimulationOutcome::Metrics {
                     instructions,
                     read_bytes,
                     write_bytes,
                 } => {
-                    // Build three CostReport entries for this function. In
-                    // --check mode, attach the configured limit and
+                    // Build four CostReport entries for this function.
+                    // In --check mode, attach the configured limit and
                     // pass/fail to each entry.
                     for (metric, value) in [
                         ("CPU Instructions", instructions),
@@ -724,6 +865,12 @@ fn main() -> Result<()> {
                                 function, err
                             );
                         }
+                        SimulationFailure::Spawn(err) => {
+                            eprintln!(
+                                "Warning: Subprocess error for {}: {}",
+                                function, err
+                            );
+                        }
                     }
                     if let (true, Some(fc)) = (args.check, func_config) {
                         // A configured function that won't simulate cannot
@@ -731,7 +878,7 @@ fn main() -> Result<()> {
                         // a check failure even if no `*_limit` is set on
                         // this row of budget.toml.
                         checks_failed = true;
-                        emit_check_failure_entries(&mut reports, &package.name, &function, fc);
+                        emit_check_failure_entries(&mut reports, &package.name, function, fc);
                     }
                 }
             }
@@ -848,6 +995,9 @@ fn main() -> Result<()> {
             println!("Summary: {} check(s) passed, {} failed", passed, failed);
         }
     }
+
+    let elapsed = overall_start.elapsed();
+    eprintln!("\nTotal wall-clock time: {:.2}s", elapsed.as_secs_f64());
 
     if has_errors || (args.check && checks_failed) {
         std::process::exit(1);
