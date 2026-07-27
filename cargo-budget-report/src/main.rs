@@ -1297,6 +1297,13 @@ impl Mode {
 mod module_8;
 
 #[cfg(test)]
+mod module_18;
+
+/// Serializes tests that mutate the process working directory.
+#[cfg(test)]
+static TEST_CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
