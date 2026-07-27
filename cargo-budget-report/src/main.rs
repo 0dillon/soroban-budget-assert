@@ -266,6 +266,36 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     }
 }
 
+fn simulate_transaction(rpc_url: &str, tx_xdr: &str) -> Result<serde_json::Value> {
+    let rpc_payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateTransaction",
+        "params": {
+            "transaction": tx_xdr
+        }
+    });
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let resp = client
+        .post(rpc_url)
+        .json(&rpc_payload)
+        .send()
+        .map_err(|e| anyhow::anyhow!("RPC request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("RPC request returned HTTP {}", resp.status());
+    }
+
+    let rpc_resp: serde_json::Value = resp.json().context("Failed to parse JSON response")?;
+
+    Ok(rpc_resp)
+}
+
 /// Scaffold a commented `budget.toml` template. Errors if the file already
 /// exists and `force` is not set.
 fn scaffold_init(force: bool) -> Result<()> {
@@ -522,48 +552,29 @@ fn main() -> Result<()> {
                     .trim()
                     .to_string();
 
-                let rpc_payload = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "simulateTransaction",
-                    "params": {
-                        "transaction": b64_xdr
+                let rpc_url = "https://soroban-testnet.stellar.org:443";
+                let rpc_resp = match simulate_transaction(rpc_url, &b64_xdr) {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        has_errors = true;
+                        eprintln!(
+                            "Warning: Simulation failed for {} on {}: {:#}",
+                            function, rpc_url, e
+                        );
+                        if let (true, Some(fc)) = (args.check, func_config) {
+                            checks_failed = true;
+                            emit_check_failure_entries(&mut reports, &package.name, &function, fc);
+                        }
+                        continue;
                     }
-                });
-
-                use std::io::Write;
-                let mut curl = Command::new("curl")
-                    .args([
-                        "-s",
-                        "-X",
-                        "POST",
-                        "-H",
-                        "Content-Type: application/json",
-                        "-d",
-                        "@-",
-                        "https://soroban-testnet.stellar.org:443",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .spawn()
-                    .context("failed to execute curl")?;
-
-                {
-                    let stdin = curl.stdin.as_mut().context("Failed to open stdin")?;
-                    stdin
-                        .write_all(rpc_payload.to_string().as_bytes())
-                        .context("Failed to write to stdin")?;
-                }
-
-                let curl_output = curl
-                    .wait_with_output()
-                    .context("Failed to read curl output")?;
-                let rpc_resp: serde_json::Value = serde_json::from_slice(&curl_output.stdout)
-                    .context("Failed to parse RPC response")?;
+                };
 
                 if let Some(error) = rpc_resp.get("error") {
                     has_errors = true;
-                    eprintln!("Warning: RPC error for {}: {}", function, error);
+                    eprintln!(
+                        "Warning: RPC error for {} on {}: {}",
+                        function, rpc_url, error
+                    );
                     if let (true, Some(fc)) = (args.check, func_config) {
                         checks_failed = true;
                         emit_check_failure_entries(&mut reports, &package.name, &function, fc);
