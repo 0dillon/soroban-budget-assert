@@ -142,7 +142,10 @@ fn json_function_filter_reports_only_the_selected_function() {
         serde_json::from_str(&stdout).expect("stdout should be valid JSON");
     let reports = reports.as_array().expect("report should be a JSON array");
 
-    assert!(!reports.is_empty(), "the selected function should be reported");
+    assert!(
+        !reports.is_empty(),
+        "the selected function should be reported"
+    );
     assert!(
         reports.iter().all(|report| {
             report["package"] == "mock-contract-a" && report["function"] == "ping"

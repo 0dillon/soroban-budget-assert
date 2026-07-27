@@ -291,9 +291,9 @@ impl MarginToml {
         let read = self
             .read_margin
             .ok_or_else(|| Error::Message("missing margin.read_margin in budget.toml".into()))?;
-        let write = self.write_margin.ok_or_else(|| {
-            Error::Message("missing margin.write_margin in budget.toml".into())
-        })?;
+        let write = self
+            .write_margin
+            .ok_or_else(|| Error::Message("missing margin.write_margin in budget.toml".into()))?;
         Margin::new(cpu, memory, read, write)
     }
 
@@ -1080,9 +1080,11 @@ fn run_derive_mode(args: &BudgetReportArgs, toml_config: &BudgetToml) -> Result<
     fn parse_cli_margin(field: &str, raw: Option<&String>) -> Result<Option<f64>> {
         match raw {
             None => Ok(None),
-            Some(text) => text.trim().parse::<f64>().map(Some).map_err(|e| {
-                Error::Message(format!("invalid --margin-{field} `{text}`: {e}"))
-            }),
+            Some(text) => text
+                .trim()
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|e| Error::Message(format!("invalid --margin-{field} `{text}`: {e}"))),
         }
     }
     let cli_parts = [
@@ -1488,10 +1490,7 @@ fn main() -> anyhow::Result<()> {
                     ) {
                         Ok(outcome) => outcome,
                         Err(e) => {
-                            SimulationOutcome::Failed(SimulationFailure::Spawn(format!(
-                                "{:#}",
-                                e
-                            )))
+                            SimulationOutcome::Failed(SimulationFailure::Spawn(format!("{:#}", e)))
                         }
                     };
 
@@ -1508,8 +1507,10 @@ fn main() -> anyhow::Result<()> {
 
         // Sort by original enumeration order so report output is
         // deterministic.
-        let mut ordered_results =
-            Arc::try_unwrap(results_mutex).unwrap().into_inner().unwrap();
+        let mut ordered_results = Arc::try_unwrap(results_mutex)
+            .unwrap()
+            .into_inner()
+            .unwrap();
         ordered_results.sort_by_key(|(i, _)| *i);
 
         for (i, outcome) in ordered_results {
@@ -1566,10 +1567,7 @@ fn main() -> anyhow::Result<()> {
                                 );
                             }
                             SimulationFailure::Spawn(err) => {
-                                eprintln!(
-                                    "Warning: Subprocess error for {}: {}",
-                                    function, err
-                                );
+                                eprintln!("Warning: Subprocess error for {}: {}", function, err);
                             }
                         }
                     }
