@@ -1,3 +1,5 @@
+use crate::module_10::{Error, Result, SimulationFailure, SimulationOutcome};
+use anyhow::Context;
 mod compare;
 
 use anyhow::{Context, Result};
@@ -18,6 +20,8 @@ use std::time::Duration;
 use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
+
+mod module_10;
 
 /// Maximum number of total deployment attempts (1 initial + 3 retries)
 /// when friendbot funding is suspected to have failed transiently
@@ -186,7 +190,7 @@ struct TransactionData {
 
 impl TransactionData {
     #[cfg(test)]
-    fn parse_json(json_str: &str) -> Result<Self> {
+    fn parse_json(json_str: &str) -> anyhow::Result<Self> {
         let parsed_json: serde_json::Value =
             serde_json::from_str(json_str).context("Failed to parse JSON")?;
         serde_json::from_value(parsed_json).context("Failed to deserialize transaction data")
@@ -372,7 +376,7 @@ fn format_with_commas_and_units(value: u64, metric: &str) -> String {
 /// cannot be decoded.
 fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> {
     if let Some(error) = rpc_response.get("error") {
-        anyhow::bail!("{}", error);
+        return Err(Error::Rpc(error.to_string()));
     }
 
     if let Some(error) = rpc_response.get("result").and_then(|r| r.get("error")) {
@@ -386,10 +390,10 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
 
     let tx_data_b64 = rpc_response["result"]["transactionData"]
         .as_str()
-        .context("No transactionData found in simulateTransaction response.")?;
+        .ok_or_else(|| Error::MissingField("transactionData".into()))?;
 
     let tx_data = SorobanTransactionData::from_xdr_base64(tx_data_b64, Limits::none())
-        .context("Failed to decode SorobanTransactionData from base64 XDR")?;
+        .map_err(|e| Error::Xdr(format!("Failed to decode SorobanTransactionData: {}", e)))?;
 
     Ok((
         tx_data.resources.instructions,
@@ -511,19 +515,23 @@ fn simulate_transaction_rpc(b64_xdr: &str) -> Result<serde_json::Value> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .context("failed to execute curl")?;
+        .map_err(|e| Error::CommandFailed(format!("failed to execute curl: {}", e)))?;
 
     {
-        let stdin = curl.stdin.as_mut().context("Failed to open stdin")?;
+        let stdin = curl
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Error::CommandFailed("Failed to open stdin".into()))?;
         stdin
             .write_all(rpc_payload.to_string().as_bytes())
-            .context("Failed to write to stdin")?;
+            .map_err(|e| Error::CommandFailed(format!("failed to write to stdin: {}", e)))?;
     }
 
     let curl_output = curl
         .wait_with_output()
-        .context("Failed to read curl output")?;
-    serde_json::from_slice(&curl_output.stdout).context("Failed to parse RPC response")
+        .map_err(|e| Error::CommandFailed(format!("failed to read curl output: {}", e)))?;
+    serde_json::from_slice(&curl_output.stdout)
+        .map_err(|e| Error::Message(format!("Failed to parse RPC response: {}", e)))
 }
 
 /// Simulates one exported function end-to-end: runs
@@ -548,7 +556,9 @@ fn simulate_function(
     let invoke_output = Command::new("stellar")
         .args(&invoke_args)
         .output()
-        .context("failed to execute stellar-cli invoke")?;
+        .map_err(|e| {
+            Error::CommandFailed(format!("failed to execute stellar-cli invoke: {}", e))
+        })?;
 
     if !invoke_output.status.success() {
         let stderr = String::from_utf8_lossy(&invoke_output.stderr).to_string();
@@ -588,6 +598,7 @@ fn simulate_function(
 /// Returns an error if the file exists but cannot be read or parsed.
 fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     match std::fs::read_to_string(&path) {
+        Ok(contents) => toml::from_str(&contents).map_err(Error::Toml),
         Ok(contents) => {
             let trimmed = contents.trim();
             if trimmed.is_empty()
@@ -603,7 +614,7 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
             })
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BudgetToml::default()),
-        Err(err) => Err(err).with_context(|| format!("failed to read {}", path.as_ref().display())),
+        Err(err) => Err(Error::Io(err)),
     }
 }
 
@@ -728,8 +739,12 @@ fn render_check_report_json(
 fn scaffold_init(force: bool, quiet: bool) -> Result<()> {
     let path = Path::new("budget.toml");
     if path.exists() && !force {
-        anyhow::bail!("budget.toml already exists; use --force to overwrite");
+        return Err(Error::Message(
+            "budget.toml already exists; use --force to overwrite".into(),
+        ));
     }
+    std::fs::write(path, BUDGET_TOML_TEMPLATE)?;
+    eprintln!("Wrote {}", path.display());
     std::fs::write(path, BUDGET_TOML_TEMPLATE)
         .with_context(|| format!("failed to write {}", path.display()))?;
     if !quiet {
@@ -750,21 +765,25 @@ fn run_preflight_checks(quiet: bool) -> Result<()> {
     let stellar_check = Command::new("stellar").arg("--version").output();
     match stellar_check {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            anyhow::bail!(
+            return Err(Error::Message(
                 "Stellar CLI is not installed or not on PATH.\n\
                  Install it with:  cargo install --locked stellar-cli\n\
                  See: https://github.com/stellar/stellar-cli"
-            );
+                    .to_string(),
+            ));
         }
         Err(e) => {
-            anyhow::bail!("failed to execute stellar --version: {}", e);
+            return Err(Error::CommandFailed(format!(
+                "failed to execute stellar --version: {}",
+                e
+            )));
         }
         Ok(output) if !output.status.success() => {
-            anyhow::bail!(
+            return Err(Error::CommandFailed(format!(
                 "Stellar CLI failed to run.\n\
                  stderr: {}",
                 String::from_utf8_lossy(&output.stderr)
-            );
+            )));
         }
         Ok(_output) => {
             if !quiet {
@@ -772,7 +791,6 @@ fn run_preflight_checks(quiet: bool) -> Result<()> {
             }
         }
     }
-
     // ── wasm32 target ───────────────────────────────────────────────────
     if !quiet {
         eprint!("Checking wasm32-unknown-unknown target... ");
@@ -788,7 +806,10 @@ fn run_preflight_checks(quiet: bool) -> Result<()> {
             }
         }
         Err(e) => {
-            anyhow::bail!("failed to execute rustup: {}", e);
+            return Err(Error::CommandFailed(format!(
+                "failed to execute rustup: {}",
+                e
+            )));
         }
         Ok(output) => {
             let installed = String::from_utf8_lossy(&output.stdout);
@@ -800,10 +821,11 @@ fn run_preflight_checks(quiet: bool) -> Result<()> {
                     eprintln!("found");
                 }
             } else {
-                anyhow::bail!(
+                return Err(Error::Message(
                     "wasm32-unknown-unknown target is not installed.\n\
                      Install it with:  rustup target add wasm32-unknown-unknown"
-                );
+                        .to_string(),
+                ));
             }
         }
     }
@@ -842,14 +864,18 @@ fn deploy_contract_with_retry(
                 "contract",
                 "deploy",
                 "--wasm",
-                wasm_path.to_str().context("wasm path is not valid UTF-8")?,
+                wasm_path
+                    .to_str()
+                    .ok_or_else(|| Error::Message("wasm path is not valid UTF-8".into()))?,
                 "--source",
                 source,
                 "--network",
                 network,
             ])
             .output()
-            .context("failed to execute stellar-cli deploy")?;
+            .map_err(|e| {
+                Error::CommandFailed(format!("failed to execute stellar-cli deploy: {}", e))
+            })?;
 
         if deploy_output.status.success() {
             let contract_id = String::from_utf8_lossy(&deploy_output.stdout)
@@ -861,19 +887,19 @@ fn deploy_contract_with_retry(
         last_error = String::from_utf8_lossy(&deploy_output.stderr).to_string();
     }
 
-    anyhow::bail!(
+    Err(Error::Message(format!(
         "Failed to deploy {} after {} attempts. Ensure your source account is funded.\nLast error: {}",
-        package_name,
-        MAX_DEPLOY_ATTEMPTS,
-        last_error
-    )
+        package_name, MAX_DEPLOY_ATTEMPTS, last_error
+    )))
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     let CargoCli::BudgetReport(args) = CargoCli::parse();
 
     // ── --init: scaffold a template and exit ──────────────────────────
     if args.init {
+        scaffold_init(args.force)?;
+        return Ok(());
         return scaffold_init(args.force, args.quiet);
     }
 
@@ -958,7 +984,7 @@ fn main() -> Result<()> {
         }
 
         // Parse WASM exports
-        let wasm_bytes = std::fs::read(&wasm_path).context("failed to read wasm file")?;
+        let wasm_bytes = std::fs::read(&wasm_path)?;
         let wasm_size: u32 = wasm_bytes.len().try_into().unwrap_or(u32::MAX);
         let mut exported_fns: HashSet<String> = HashSet::new();
 
@@ -1614,7 +1640,11 @@ mod tests {
         let err = load_budget_toml(&path).unwrap_err();
         let err_text = err.to_string();
 
-        assert!(err_text.contains("failed to parse"));
+        assert!(
+            err_text.contains("TOML error"),
+            "expected TOML error in message, got: {}",
+            err_text
+        );
         assert!(err_text.contains("line") || err_text.contains("Line"));
         assert!(err_text.contains("column") || err_text.contains("Column"));
     }
