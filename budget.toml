@@ -23,6 +23,12 @@ write_limit = 1000
 [functions.require_auth_only]
 args = ["--addr", "alice"]
 
+# The `do_event_heavy_work` function isolates event-emission cost by publishing
+# events in a loop with no storage or compute work mixed in. It can be invoked
+# via `cargo budget-report` on testnet without additional setup.
+[functions.do_event_heavy_work]
+args = ["--n", "5"]
+
 # The AMM pool functions (initialize, deposit, swap, withdraw) are designed for
 # local test-harness measurement and exercise multiple storage keys, authorization,
 # events, and simulated token flows. They require pre-deployed token contracts and

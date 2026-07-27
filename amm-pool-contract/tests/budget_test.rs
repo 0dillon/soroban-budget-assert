@@ -475,6 +475,57 @@ fn test_write_bytes_budget_regression() {
 }
 
 // ---------------------------------------------------------------------------
+// Event-emission fixtures
+//
+// These tests exercise the `do_event_heavy_work` contract function, which
+// publishes events in a loop with no storage or compute work mixed in.
+// The local CPU and memory cost is printed so developers can calibrate
+// assertion thresholds for event-emission operations.
+// ---------------------------------------------------------------------------
+
+/// Prints the raw CPU/memory cost of an event-only invocation so
+/// developers can calibrate assertion thresholds.
+#[test]
+fn test_budget_emit_event_raw() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    env.cost_estimate().budget().reset_unlimited();
+
+    client.do_event_heavy_work(&5);
+
+    let budget = env.cost_estimate().budget();
+    println!("=== EVENT EMIT LOCAL (n=5) ===");
+    println!("CPU instructions:  {}", budget.cpu_instruction_cost());
+    println!("Memory bytes:      {}", budget.memory_bytes_cost());
+}
+
+/// Asserts that event emission stays below a generous threshold so normal
+/// usage passes in CI.
+#[test]
+#[budget_cpu_lt(5000000)]
+fn test_budget_emit_event_gated() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.do_event_heavy_work(&5);
+}
+
+/// Demonstrates a deliberate event-emission regression: the limit is set
+/// below the actual cost so the assertion fires and the test panics.
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1)] // Unrealistically tight limit — always exceeded for any real event emission
+fn test_budget_emit_event_deliberate_regression() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.do_event_heavy_work(&5);
+}
+
+// ---------------------------------------------------------------------------
 // Test body shapes (issue #6)
 //
 // The assertion is injected on every path that leaves the test, so these body

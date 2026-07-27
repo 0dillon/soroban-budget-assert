@@ -37,6 +37,15 @@ The native Rust row is included solely to illustrate that native estimates are u
 
 All three rows measure the same `do_expensive_work(10_000)` function, which mixes a compute loop (`n` iterations of `wrapping_add(wrapping_mul)`) with a storage write (`Vec` of up to 100 elements written to `env.storage().instance().set`). The numbers are aggregate costs of both operations.
 
+### Event emission
+
+| Metric | Local estimate | Network figure | Delta | Fixture | Build profile | Toolchain | Date |
+|---|---|---|---|---|---|---|---|
+| CPU instructions | 2,945,588 | Pending — needs `cargo budget-report` run against testnet | — | `amm-pool-contract::do_event_heavy_work(5)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
+| Memory bytes | 1,728,814 | Pending | — | `amm-pool-contract::do_event_heavy_work(5)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
+
+The fixture publishes 5 events with a minimal payload (`("ev",)` topic, single `u32` body) in a loop, with no storage or compute work mixed in. To obtain the network figure, run `cargo budget-report` against testnet with a `budget.toml` entry for `do_event_heavy_work` and capture `simulateTransaction` output.
+
 ## Unmeasured operation types
 
 The following operation types have open measurement issues and no published figures yet. When adding a measurement, follow the column format above and include the build profile and toolchain.
