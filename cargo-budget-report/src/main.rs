@@ -1,3 +1,5 @@
+mod compare;
+
 use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
