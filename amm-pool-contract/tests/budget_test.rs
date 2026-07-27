@@ -70,10 +70,7 @@ fn test_measure_gap_vs_input_size() {
         env.cost_estimate().budget().reset_unlimited();
         client.do_expensive_work(&n);
         let wasm_cpu = env.cost_estimate().budget().cpu_instruction_cost();
-        println!(
-            "  n={:>6} | local WASM CPU: {:>10}",
-            n, wasm_cpu
-        );
+        println!("  n={:>6} | local WASM CPU: {:>10}", n, wasm_cpu);
     }
 }
 
