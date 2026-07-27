@@ -116,6 +116,13 @@ struct BudgetReportArgs {
     /// regardless of this flag.
     #[arg(long, default_value_t = false)]
     quiet: bool,
+
+    /// Cargo build profile to use when compiling the contract WASM.
+    ///
+    /// Defaults to `release` when not provided. Custom profiles (e.g.
+    /// `release-opt`) must be defined in the project's `Cargo.toml`.
+    #[arg(long)]
+    profile: Option<String>,
 }
 
 /// Top-level configuration deserialized from `budget.toml`.
@@ -728,6 +735,8 @@ fn main() -> Result<()> {
     let mut has_errors = false;
     let mut checks_failed = false;
 
+    let build_profile = args.profile.as_deref().unwrap_or("release");
+
     for package in metadata.packages {
         let is_cdylib = package
             .targets
@@ -747,7 +756,8 @@ fn main() -> Result<()> {
                 &package.name,
                 "--target",
                 "wasm32-unknown-unknown",
-                "--release",
+                "--profile",
+                build_profile,
             ])
             .status()
             .context("failed to build package")?;
@@ -761,7 +771,7 @@ fn main() -> Result<()> {
         let wasm_path = metadata
             .target_directory
             .join("wasm32-unknown-unknown")
-            .join("release")
+            .join(build_profile)
             .join(format!("{}.wasm", wasm_name));
 
         if !wasm_path.exists() {
