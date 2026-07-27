@@ -1337,6 +1337,9 @@ mod module_8;
 #[cfg(test)]
 mod module_18;
 
+#[cfg(test)]
+mod module_19;
+
 /// Serializes tests that mutate the process working directory.
 #[cfg(test)]
 static TEST_CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
