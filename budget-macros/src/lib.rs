@@ -383,25 +383,6 @@ fn generate_budget_assert(spec: BudgetSpec, item: TokenStream) -> TokenStream {
         });
     }
 
-    let prelude = quote! {
-        #[allow(unused_variables)]
-        let budget_env_resolve = |var: &str| -> Option<String> {
-            std::env::var(var).ok()
-        };
-    };
-
-            // Wrap injected temporaries in their own scope so they never
-            // collide with user-declared `budget`, `cpu_cost`, `mem_cost`,
-            // or `limit_u64` names in the test function body.
-            {
-                let budget = #env_ident.cost_estimate().budget();
-                #(#asserts)*
-            }
-    // Injected at every path that leaves the test, not just after the last
-    // statement, so an early `return` cannot skip it. It stays inside the body's
-    // scope so each limit still resolves against the body's own bindings — tests
-    // that shadow `budget_env_resolve` rely on that.
-    let assertion = quote! {
     let new_block = quote! {
         {
             #[allow(unused_variables)]
@@ -597,28 +578,7 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
 
     let stmts = &input_fn.block.stmts;
 
-    let limit_expr = match limit {
-        BudgetLimit::Int(n) => quote! { #n },
-        BudgetLimit::EnvVar(var) => quote! {
-            std::env::var(#var)
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(u64::MAX)
-        },
-        BudgetLimit::Config(key) => quote! {
-            std::fs::read_to_string(std::path::Path::new("budget.json"))
-                .ok()
-                .map(|content| {
-                    parse_config_value(&content, #key).unwrap_or_else(|| {
-                        panic!(
-                            "budget_write_bytes_lt: key '{}' not found or invalid in budget.json",
-                            #key,
-                        )
-                    })
-                })
-                .unwrap_or(u64::MAX)
-        },
-    };
+    let limit_expr = generate_limit_expr(&limit, "budget_write_bytes_lt");
 
     let env_ident = proc_macro2::Ident::new("env", proc_macro2::Span::call_site());
 
@@ -644,6 +604,70 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
         #input_fn
     })
 }
+
+/// Asserts that the memory bytes used by `env` are strictly less than a specified limit.
+///
+/// Must be placed on a test function that contains a local `env` variable (a `soroban_sdk::Env`).
+/// The macro appends an assertion check to the body of the test function that measures
+/// `env.cost_estimate().budget().memory_bytes_cost()`.
+///
+/// # Local Estimates vs Network Costs
+///
+/// This attribute checks a **local estimate** of memory byte consumption.
+/// Local estimates (such as raw Rust test execution or unoptimized local WASM builds) can
+/// strictly underestimate or differ significantly from real Testnet or Futurenet costs, which
+/// include host function overheads, VM heap/stack allocation overheads, and protocol execution parameters.
+///
+/// Use local assertions as a fast local regression gate. For true network ground truth, use
+/// `cargo budget-report`.
+///
+/// # Usage Examples
+///
+/// ## Static Limit
+///
+/// Pass an integer literal representing the maximum allowed memory bytes:
+///
+/// ```rust,ignore
+/// use budget_macros::budget_mem_lt;
+/// use soroban_sdk::Env;
+///
+/// #[test]
+/// #[budget_mem_lt(500_000)]
+/// fn test_memory_budget() {
+///     let env = Env::default();
+///     // ... setup contract client and invoke contract function ...
+/// }
+/// ```
+///
+/// ## Dynamic Limit via Environment Variable (`env = "VAR_NAME"`)
+///
+/// Read the limit dynamically from an environment variable at test runtime:
+///
+/// ```rust,ignore
+/// use budget_macros::budget_mem_lt;
+/// use soroban_sdk::Env;
+///
+/// #[test]
+/// #[budget_mem_lt(env = "MAX_MEMORY_BYTES")]
+/// fn test_memory_budget_dynamic() {
+/// fn test_mem_budget_dynamic() {
+///     let env = Env::default();
+///     // ... setup contract client and invoke contract function ...
+/// }
+/// ```
+///
+/// When using `env = "VAR_NAME"`:
+/// ## Limit from a `.env` File (`env_file = "PATH"` + `env = "VAR_NAME"`)
+///
+/// Same as the `budget_cpu_lt` form: the limit is read at test runtime from
+/// the `KEY=VALUE` file at `PATH`. See `budget_cpu_lt`'s documentation and
+/// the project `README.md` for the derivation workflow.
+///
+/// When using `env = "VAR_NAME"` (no `env_file`):
+/// - If the environment variable is **unset**, the limit defaults to `u64::MAX` ("no limit"),
+///   allowing the test assertion to pass unconditionally.
+/// - If the environment variable is set to a string that **cannot be parsed as a `u64`**,
+///   the test panics at runtime with an explicit error naming the variable and invalid value.
 #[proc_macro_attribute]
 pub fn budget_mem_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {
