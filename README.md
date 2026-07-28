@@ -79,7 +79,13 @@ Example: `https://your-org.github.io/your-repo/dashboard.html?limit=100`.
 ## 🚀 Quick Start
 
 ### 1. Installation
-Install the CLI tool locally from the repository root:
+
+Install from [crates.io](https://crates.io/crates/cargo-budget-report) (recommended):
+```bash
+cargo install cargo-budget-report
+```
+
+Alternatively, build from source:
 ```bash
 cargo install --path cargo-budget-report
 ```

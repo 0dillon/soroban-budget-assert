@@ -2710,4 +2710,210 @@ write_limit = 1000
         let csv = module_32::reports_to_csv(&reports, false);
         assert_eq!(csv, "package,function,metric,value\n");
     }
+
+    // ── JSON serialization tests ────────────────────────────────────────
+
+    /// Helper to serialize a slice of CostReport to a pretty-printed JSON
+    /// string, matching the `--json` output path.
+    fn reports_to_json(reports: &[CostReport]) -> String {
+        serde_json::to_string_pretty(reports).unwrap()
+    }
+
+    #[test]
+    fn json_output_without_check_has_package_function_metric_value() {
+        let reports = vec![
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "CPU Instructions",
+                value: Some(1_000_000),
+                limit: None,
+                pass: None,
+            },
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "Read Bytes",
+                value: Some(2_048),
+                limit: None,
+                pass: None,
+            },
+        ];
+        let json = reports_to_json(&reports);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        assert_eq!(arr[0]["package"], "my-contract");
+        assert_eq!(arr[0]["function"], "do_work");
+        assert_eq!(arr[0]["metric"], "CPU Instructions");
+        assert_eq!(arr[0]["value"], 1_000_000);
+        assert!(arr[0].get("limit").is_none());
+        assert!(arr[0].get("pass").is_none());
+
+        assert_eq!(arr[1]["package"], "my-contract");
+        assert_eq!(arr[1]["function"], "do_work");
+        assert_eq!(arr[1]["metric"], "Read Bytes");
+        assert_eq!(arr[1]["value"], 2_048);
+        assert!(arr[1].get("limit").is_none());
+        assert!(arr[1].get("pass").is_none());
+    }
+
+    #[test]
+    fn json_output_with_check_includes_limit_and_pass() {
+        let reports = vec![
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "CPU Instructions",
+                value: Some(1_000_000),
+                limit: Some(5_000_000),
+                pass: Some(true),
+            },
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "Write Bytes",
+                value: Some(4_096),
+                limit: Some(1_000),
+                pass: Some(false),
+            },
+        ];
+        let json = reports_to_json(&reports);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        assert_eq!(arr[0]["package"], "my-contract");
+        assert_eq!(arr[0]["function"], "do_work");
+        assert_eq!(arr[0]["metric"], "CPU Instructions");
+        assert_eq!(arr[0]["value"], 1_000_000);
+        assert_eq!(arr[0]["limit"], 5_000_000);
+        assert_eq!(arr[0]["pass"], true);
+
+        assert_eq!(arr[1]["package"], "my-contract");
+        assert_eq!(arr[1]["function"], "do_work");
+        assert_eq!(arr[1]["metric"], "Write Bytes");
+        assert_eq!(arr[1]["value"], 4_096);
+        assert_eq!(arr[1]["limit"], 1_000);
+        assert_eq!(arr[1]["pass"], false);
+    }
+
+    #[test]
+    fn json_output_without_check_excludes_null_values() {
+        let reports = vec![
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "CPU Instructions",
+                value: None,
+                limit: None,
+                pass: None,
+            },
+            CostReport {
+                package: "my-contract".to_string(),
+                function: "do_work".to_string(),
+                metric: "Read Bytes",
+                value: Some(2_048),
+                limit: None,
+                pass: None,
+            },
+        ];
+        let json = reports_to_json(&reports);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // The CPU Instructions entry has value: None; with
+        // skip_serializing_if, "value" is absent from the JSON object.
+        assert!(arr[0].get("value").is_none());
+        // But the entry itself is still present in the array.
+        assert_eq!(arr[0]["metric"], "CPU Instructions");
+
+        assert_eq!(arr[1]["metric"], "Read Bytes");
+        assert_eq!(arr[1]["value"], 2_048);
+    }
+
+    #[test]
+    fn json_output_with_check_includes_simulation_failures() {
+        let reports = vec![CostReport {
+            package: "my-contract".to_string(),
+            function: "do_work".to_string(),
+            metric: "CPU Instructions",
+            value: None,
+            limit: Some(5_000_000),
+            pass: Some(false),
+        }];
+        let json = reports_to_json(&reports);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+
+        assert_eq!(arr[0]["package"], "my-contract");
+        assert_eq!(arr[0]["function"], "do_work");
+        assert_eq!(arr[0]["metric"], "CPU Instructions");
+        assert!(arr[0].get("value").is_none());
+        assert_eq!(arr[0]["limit"], 5_000_000);
+        assert_eq!(arr[0]["pass"], false);
+    }
+
+    #[test]
+    fn json_output_empty_reports_produces_empty_array() {
+        let reports: Vec<CostReport> = vec![];
+        let json = reports_to_json(&reports);
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn json_output_with_all_metric_types() {
+        let reports = vec![
+            CostReport {
+                package: "pkg".to_string(),
+                function: "f".to_string(),
+                metric: "CPU Instructions",
+                value: Some(1_000_000),
+                limit: None,
+                pass: None,
+            },
+            CostReport {
+                package: "pkg".to_string(),
+                function: "f".to_string(),
+                metric: "Read Bytes",
+                value: Some(2_048),
+                limit: None,
+                pass: None,
+            },
+            CostReport {
+                package: "pkg".to_string(),
+                function: "f".to_string(),
+                metric: "Write Bytes",
+                value: Some(4_096),
+                limit: None,
+                pass: None,
+            },
+            CostReport {
+                package: "pkg".to_string(),
+                function: "f".to_string(),
+                metric: "WASM Bytes",
+                value: Some(12_345),
+                limit: None,
+                pass: None,
+            },
+        ];
+        let json = reports_to_json(&reports);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 4);
+
+        let metrics: Vec<&str> = arr.iter().map(|r| r["metric"].as_str().unwrap()).collect();
+        assert_eq!(
+            metrics,
+            vec![
+                "CPU Instructions",
+                "Read Bytes",
+                "Write Bytes",
+                "WASM Bytes"
+            ]
+        );
+    }
 }
