@@ -220,9 +220,13 @@ struct BudgetReportArgs {
 ///
 /// Contains optional network and source-account overrides, plus a map of
 /// per-function budget configurations keyed by exported function name.
-#[derive(serde::Deserialize, Default, Debug)]
+#[derive(serde::Deserialize, Debug)]
 struct BudgetToml {
+    /// Network to target. Defaults to `"testnet"` when not specified.
+    #[serde(default = "default_network")]
     network: Option<String>,
+    /// Stellar source account keypair name. Defaults to `"alice"` when not specified.
+    #[serde(default = "default_source")]
     source: Option<String>,
     /// Global default tolerance, used unless overridden per function or by `--tolerance`.
     #[serde(default)]
@@ -1932,6 +1936,9 @@ mod module_17;
 
 #[cfg(test)]
 mod module_18;
+
+#[cfg(test)]
+mod module_23;
 
 /// Serializes tests that mutate the process working directory.
 #[cfg(test)]
