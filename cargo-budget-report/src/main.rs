@@ -1,7 +1,6 @@
-use crate::derive::{DerivationConfig, Margin};
-use crate::module_10::{Error, Result, SimulationFailure, SimulationOutcome};
-use anyhow::Context;
-mod compare;
+pub mod module_11;
+
+use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use compare::{
