@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
+
+mod module_35;
+use module_35::FilterSet;
 use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
@@ -521,6 +524,18 @@ impl MeasuredResources {
             write_bytes: self.write_bytes,
         }
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+struct CacheEntry {
+    wasm_sha256: String,
+    contract_id: String,
+    network: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+struct BudgetCache {
+    package: HashMap<String, CacheEntry>,
 }
 
 /// A single row in the budget report, representing one metric for one
@@ -1304,6 +1319,63 @@ fn run_preflight_checks(quiet: bool) -> Module10Result<()> {
     Ok(())
 }
 
+/// Loads the contract ID cache from `.budget-cache.toml`.
+fn load_cache() -> BudgetCache {
+    std::fs::read_to_string(CACHE_FILE)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_cache(cache: &BudgetCache) {
+    let toml_str = toml::to_string_pretty(cache).unwrap_or_default();
+    let _ = std::fs::write(CACHE_FILE, toml_str);
+}
+
+fn wasm_sha256(wasm_bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(wasm_bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn get_contract_id_for_package(
+    package_name: &str,
+    wasm_bytes: &[u8],
+    network: &str,
+    source: &str,
+    wasm_path: &Path,
+    force_deploy: bool,
+    cache: &mut BudgetCache,
+) -> Result<String> {
+    let hash = wasm_sha256(wasm_bytes);
+
+    if !force_deploy {
+        if let Some(entry) = cache.package.get(package_name) {
+            if entry.wasm_sha256 == hash && entry.network == network {
+                eprintln!(
+                    "Cache hit for '{}' — reusing contract id {}",
+                    package_name, entry.contract_id
+                );
+                return Ok(entry.contract_id.clone());
+            }
+        }
+    }
+
+    let contract_id = deploy_contract_with_retry(wasm_path, source, network, package_name)?;
+
+    cache.package.insert(
+        package_name.to_string(),
+        CacheEntry {
+            wasm_sha256: hash,
+            contract_id: contract_id.clone(),
+            network: network.to_string(),
+        },
+    );
+    save_cache(cache);
+
+    Ok(contract_id)
+}
+
 /// Deploys a contract WASM to the network with automatic retry on
 /// friendbot-related transient failures.
 ///
@@ -1613,6 +1685,10 @@ fn main() -> anyhow::Result<()> {
         .exec()
         .context("failed to execute cargo metadata")?;
 
+    let filter = FilterSet::new(args.package, args.function);
+    let force_deploy = args.force_deploy;
+    let mut cache = load_cache();
+
     let mut reports = Vec::new();
     // `measurements` is the basis for both the legacy table output and the
     // snapshot/baseline modes. The BTreeMap ordering carries through to the
@@ -1628,11 +1704,16 @@ fn main() -> anyhow::Result<()> {
         let is_cdylib = package
             .targets
             .iter()
-            .any(|target| target.crate_types.iter().any(|ct| *ct == "cdylib"));
+            .any(|t| t.crate_types.iter().any(|c| *c == "cdylib"));
         if !is_cdylib {
             continue;
         }
 
+        if !filter.wants_package(&package.name) {
+            continue;
+        }
+
+        eprintln!("Building package '{}' for wasm32...", package.name);
         if !args.quiet {
             eprintln!("Building package '{}' for wasm32...", package.name);
         }
@@ -1729,8 +1810,15 @@ fn main() -> anyhow::Result<()> {
             Some(pb)
         };
 
-        let contract_id =
-            deploy_contract_with_retry(wasm_path.as_std_path(), &source, &network, &package.name)?;
+        let contract_id = get_contract_id_for_package(
+            &package.name,
+            &wasm_bytes,
+            &network,
+            &source,
+            wasm_path.as_std_path(),
+            force_deploy,
+            &mut cache,
+        )?;
 
         if let Some(spinner) = spinner {
             spinner.finish_and_clear();
@@ -1739,6 +1827,11 @@ fn main() -> anyhow::Result<()> {
         eprintln!("Contract deployed at: {}", contract_id);
 
         for function in exported_fns {
+            if !filter.wants_function(&function) {
+                continue;
+            }
+
+            eprintln!("Simulating function '{}'...", function);
             if !args.quiet {
                 eprintln!("Simulating function '{}'...", function);
             }
