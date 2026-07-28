@@ -98,6 +98,7 @@ fn discovers_mock_workspace_and_reports_cleanly() {
 }
 
 #[test]
+fn json_output_reports_all_mock_contracts() {
 fn function_filter_reports_only_the_selected_function() {
     let workspace = setup_mock_workspace();
 
