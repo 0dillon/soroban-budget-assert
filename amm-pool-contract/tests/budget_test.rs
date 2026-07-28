@@ -19,7 +19,6 @@ struct BudgetJsonGuard {
 
 impl BudgetJsonGuard {
     fn create(content: &str) -> Self {
-        let lock = BUDGET_JSON_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let lock = BUDGET_JSON_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -329,9 +328,6 @@ fn test_budget_macro_json_config_mem_valid() {
 }
 
 #[test]
-#[should_panic(
-    expected = "key 'non_existent_key' not found or invalid in budget.json"
-)]
 #[should_panic(expected = "key 'non_existent_key' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "non_existent_key")]
 fn test_budget_macro_json_config_missing_key() {
@@ -360,9 +356,6 @@ fn test_budget_macro_json_config_deliberate_regression() {
 }
 
 #[test]
-#[should_panic(
-    expected = "key 'cpu_instructions' not found or invalid in budget.json"
-)]
 #[should_panic(expected = "key 'cpu_instructions' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_missing_key_empty_config() {
@@ -377,9 +370,6 @@ fn test_budget_macro_json_config_missing_key_empty_config() {
 }
 
 #[test]
-#[should_panic(
-    expected = "key 'cpu_instructions' not found or invalid in budget.json"
-)]
 #[should_panic(expected = "key 'cpu_instructions' not found or invalid in budget.json")]
 #[budget_cpu_lt(config = "cpu_instructions")]
 fn test_budget_macro_json_config_invalid_json() {

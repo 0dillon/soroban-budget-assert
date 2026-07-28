@@ -1,9 +1,7 @@
-use crate::derive::{self, DerivationConfig, Margin};
+use crate::derive::{DerivationConfig, Margin};
 use crate::module_10::{Error, Result, SimulationFailure, SimulationOutcome};
 use anyhow::Context;
 mod compare;
-
-use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use compare::{
@@ -22,6 +20,7 @@ use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::{Table, Tabled};
 use wasmparser::Parser as WasmParser;
 
+mod derive;
 mod module_10;
 
 /// Maximum number of total deployment attempts (1 initial + 3 retries)
@@ -142,6 +141,19 @@ struct BudgetReportArgs {
     #[arg(long, default_value_t = false)]
     quiet: bool,
 
+    /// Validate reported metrics against the Stellar CLI's own XDR decoder.
+    ///
+    /// For each successfully simulated function, the base64 SorobanTransactionData
+    /// XDR from the RPC response is re-decoded through `stellar xdr decode` and
+    /// the resulting metrics are compared against cargo-budget-report's values.
+    /// Any discrepancy is reported as a diagnostic; the tool still exits with a
+    /// non-zero status when mismatches are found.
+    ///
+    /// Validation is skipped (not failed) when the Stellar CLI or the `xdr decode`
+    /// subcommand is unavailable.
+    #[arg(long, default_value_t = false)]
+    validate: bool,
+
     /// Cargo build profile to use when compiling the contract WASM.
     ///
     /// Defaults to `release` when not provided. Custom profiles (e.g.
@@ -257,9 +269,9 @@ impl MarginToml {
         let read = self
             .read_margin
             .ok_or_else(|| Error::Message("missing margin.read_margin in budget.toml".into()))?;
-        let write = self.write_margin.ok_or_else(|| {
-            Error::Message("missing margin.write_margin in budget.toml".into())
-        })?;
+        let write = self
+            .write_margin
+            .ok_or_else(|| Error::Message("missing margin.write_margin in budget.toml".into()))?;
         Margin::new(cpu, memory, read, write)
     }
 
@@ -506,9 +518,9 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
     if let Some(error) = rpc_response.get("result").and_then(|r| r.get("error")) {
         let err_msg = error.as_str().unwrap_or("");
         if !err_msg.is_empty() {
-            anyhow::bail!("{}", err_msg);
+            return Err(Error::Rpc(err_msg.to_string()));
         } else {
-            anyhow::bail!("{}", error);
+            return Err(Error::Rpc(error.to_string()));
         }
     }
 
@@ -526,35 +538,6 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
         tx_data.resources.read_bytes,
         tx_data.resources.write_bytes,
     ))
-}
-
-/// Why simulating a single exported function did not produce metrics.
-/// Carries the same text the caller previously logged inline, so extracting
-/// this out of the main loop doesn't change any user-facing diagnostics.
-///
-/// Each variant corresponds to a different failure point in the
-/// `stellar contract invoke --build-only` → `simulateTransaction` pipeline.
-enum SimulationFailure {
-    /// `stellar contract invoke --build-only` exited non-zero.
-    Invoke(String),
-    /// The RPC `simulateTransaction` response contained an `"error"` field.
-    Rpc(String),
-    /// The RPC response didn't contain a decodable `SorobanTransactionData`.
-    MetricsExtraction(String),
-}
-
-/// Outcome of simulating one exported function.
-///
-/// Distinguishes between a successful simulation (with extracted resource
-/// metrics) and a recoverable failure so the caller can continue iterating
-/// over remaining functions instead of aborting the entire report.
-enum SimulationOutcome {
-    Metrics {
-        instructions: u32,
-        read_bytes: u32,
-        write_bytes: u32,
-    },
-    Failed(SimulationFailure),
 }
 
 /// Builds the `stellar contract invoke --build-only -- <function> [args..]`
@@ -702,11 +685,18 @@ fn simulate_function(
         )));
     }
 
+    // Capture the raw transactionData XDR before decode, so --validate
+    // can re-decode it through the Stellar CLI independently.
+    let tx_data_xdr_b64 = rpc_resp["result"]["transactionData"]
+        .as_str()
+        .map(|s| s.to_string());
+
     match extract_metrics(&rpc_resp) {
         Ok((instructions, read_bytes, write_bytes)) => Ok(SimulationOutcome::Metrics {
             instructions,
             read_bytes,
             write_bytes,
+            transaction_data_xdr: tx_data_xdr_b64.unwrap_or_default(),
         }),
         Err(err) => Ok(SimulationOutcome::Failed(
             SimulationFailure::MetricsExtraction(format!("{:#}", err)),
@@ -724,7 +714,6 @@ fn simulate_function(
 /// Returns an error if the file exists but cannot be read or parsed.
 fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
     match std::fs::read_to_string(&path) {
-        Ok(contents) => toml::from_str(&contents).map_err(Error::Toml),
         Ok(contents) => {
             let trimmed = contents.trim();
             if trimmed.is_empty()
@@ -735,9 +724,7 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
                 return Ok(BudgetToml::default());
             }
 
-            toml::from_str(&contents).map_err(|err| {
-                anyhow::anyhow!("failed to parse {}: {}", path.as_ref().display(), err)
-            })
+            toml::from_str(&contents).map_err(Error::Toml)
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BudgetToml::default()),
         Err(err) => Err(Error::Io(err)),
@@ -746,7 +733,7 @@ fn load_budget_toml<P: AsRef<Path>>(path: P) -> Result<BudgetToml> {
 
 fn resolve_tolerance(cli_override: Option<&str>, config: &BudgetToml) -> Result<Tolerance> {
     if let Some(raw) = cli_override {
-        return parse_tolerance(raw);
+        return parse_tolerance(raw).map_err(|e| Error::Message(e.to_string()));
     }
     if let Some(t) = config.tolerance {
         return Ok(Tolerance::new(t));
@@ -869,10 +856,8 @@ fn scaffold_init(force: bool, quiet: bool) -> Result<()> {
             "budget.toml already exists; use --force to overwrite".into(),
         ));
     }
-    std::fs::write(path, BUDGET_TOML_TEMPLATE)?;
-    eprintln!("Wrote {}", path.display());
     std::fs::write(path, BUDGET_TOML_TEMPLATE)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+        .map_err(|e| Error::Message(format!("failed to write {}: {}", path.display(), e)))?;
     if !quiet {
         eprintln!("Wrote {}", path.display());
     }
@@ -1043,9 +1028,11 @@ fn run_derive_mode(args: &BudgetReportArgs, toml_config: &BudgetToml) -> Result<
     fn parse_cli_margin(field: &str, raw: Option<&String>) -> Result<Option<f64>> {
         match raw {
             None => Ok(None),
-            Some(text) => text.trim().parse::<f64>().map(Some).map_err(|e| {
-                Error::Message(format!("invalid --margin-{field} `{text}`: {e}"))
-            }),
+            Some(text) => text
+                .trim()
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|e| Error::Message(format!("invalid --margin-{field} `{text}`: {e}"))),
         }
     }
     let cli_parts = [
@@ -1148,13 +1135,12 @@ fn build_utc_timestamp() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| Error::Message(format!("system time error: {e}")))
-        .and_then(|d| {
+        .map(|d| {
             // Approximate UTC seconds-since-epoch using a 0-based
             // bijection: 86400 seconds/day, 365.25 days/year. Good
             // enough for an audit-trail timestamp; rounding to days
             // would also be acceptable.
-            let secs = d.as_secs();
-            Ok(secs)
+            d.as_secs()
         })
         .unwrap_or(0);
     // The header timestamp is descriptive, not asserted, so it is
@@ -1227,9 +1213,8 @@ fn main() -> anyhow::Result<()> {
 
     // ── --init: scaffold a template and exit ──────────────────────────
     if args.init {
-        scaffold_init(args.force)?;
+        scaffold_init(args.force, args.quiet)?;
         return Ok(());
-        return scaffold_init(args.force, args.quiet);
     }
 
     // ── --derive-limits: read Tier B JSON → write env file, no simulation ──
@@ -1276,6 +1261,7 @@ fn main() -> anyhow::Result<()> {
     let mut measurements: BTreeMap<String, BTreeMap<String, MeasuredResources>> = BTreeMap::new();
     let mut has_errors = false;
     let mut checks_failed = false;
+    let mut validation_failed = false;
 
     let build_profile = args.profile.as_deref().unwrap_or("release");
 
@@ -1387,6 +1373,7 @@ fn main() -> anyhow::Result<()> {
                     instructions,
                     read_bytes,
                     write_bytes,
+                    transaction_data_xdr,
                 } => {
                     // Record the measurement for baseline/snapshot mode. This
                     // was previously only wired up in stale pre-refactor
@@ -1423,6 +1410,41 @@ fn main() -> anyhow::Result<()> {
                             limit: entry_limit,
                             pass,
                         });
+                    }
+
+                    // ── Optional Stellar CLI validation ──────────────
+                    if args.validate {
+                        let v_result = validate::validate_metrics(
+                            &transaction_data_xdr,
+                            instructions,
+                            read_bytes,
+                            write_bytes,
+                        );
+                        match v_result {
+                            validate::ValidationResult::Match => {
+                                if !args.quiet {
+                                    eprintln!("  ✓ validation passed for '{}'", function);
+                                }
+                            }
+                            validate::ValidationResult::Mismatch { diagnostics } => {
+                                validation_failed = true;
+                                eprintln!(
+                                    "  ✗ VALIDATION FAILED for '{}' in package '{}':",
+                                    function, package.name
+                                );
+                                for d in &diagnostics {
+                                    eprintln!("    {}", d);
+                                }
+                            }
+                            validate::ValidationResult::Skipped { reason } => {
+                                if !args.quiet {
+                                    eprintln!(
+                                        "  - validation skipped for '{}': {}",
+                                        function, reason
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 SimulationOutcome::Failed(failure) => {
@@ -1468,7 +1490,7 @@ fn main() -> anyhow::Result<()> {
         if !args.quiet {
             eprintln!("No successful simulations to report.");
         }
-        if has_errors || (args.check && checks_failed) {
+        if has_errors || (args.check && checks_failed) || validation_failed {
             std::process::exit(1);
         }
         return Ok(());
@@ -1531,6 +1553,7 @@ fn main() -> anyhow::Result<()> {
             }
             return Ok(());
         }
+        Mode::Derive(_, _) => unreachable!("derive mode returns early before this point"),
         Mode::Report => {} // Fall through to the legacy rendering below.
     }
 
@@ -1644,11 +1667,13 @@ fn main() -> anyhow::Result<()> {
     }
     // PR #195: `--check` exits non-zero when any limit was breached so CI can
     // gate on the result. Mirrors the empty-measurements branch above.
-    if args.check && checks_failed {
+    if (args.check && checks_failed) || validation_failed {
         std::process::exit(1);
     }
     Ok(())
 }
+
+pub mod validate;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
@@ -2060,6 +2085,7 @@ mod tests {
             check_baseline: None,
             tolerance: None,
             quiet: false,
+            validate: false,
             profile: None,
             derive_limits: None,
             from: None,
@@ -2086,6 +2112,7 @@ mod tests {
             check_baseline: None,
             tolerance: None,
             quiet: false,
+            validate: false,
             profile: None,
             derive_limits: None,
             from: None,
@@ -2112,6 +2139,7 @@ mod tests {
             check_baseline: Some("custom.toml".to_string()),
             tolerance: None,
             quiet: false,
+            validate: false,
             profile: None,
             derive_limits: None,
             from: None,
@@ -2141,6 +2169,7 @@ mod tests {
             check_baseline: None,
             tolerance: None,
             quiet: false,
+            validate: false,
             profile: None,
             derive_limits: Some("tier-a-limits.env".to_string()),
             from: None,
