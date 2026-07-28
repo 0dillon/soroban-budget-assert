@@ -183,6 +183,9 @@ cargo budget-report --check
 # Same, with machine-readable JSON entries that include `limit` and `pass`
 # fields per configured function+metric:
 cargo budget-report --check --json
+
+# Exit on the first violation instead of collecting all results:
+cargo budget-report --check --fail-fast
 ```
 
 ### 📊 Share of Network Limits
