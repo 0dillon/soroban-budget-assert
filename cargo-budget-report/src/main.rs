@@ -1928,6 +1928,9 @@ mod module_32;
 mod module_8;
 
 #[cfg(test)]
+mod module_17;
+
+#[cfg(test)]
 mod module_18;
 
 /// Serializes tests that mutate the process working directory.
