@@ -978,6 +978,26 @@ fn simulate_function(
     }
 }
 
+/// Walk upward from the current directory looking for `budget.toml`.
+///
+/// Returns the path to the first `budget.toml` found, or `"budget.toml"`
+/// (relative to the original CWD) when no ancestor contains one—which
+/// lets `load_budget_toml` fall back to its default-empty behaviour.
+fn find_budget_toml() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut dir = cwd.as_path();
+    loop {
+        let candidate = dir.join("budget.toml");
+        if candidate.exists() {
+            return candidate;
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return PathBuf::from("budget.toml"),
+        }
+    }
+}
+
 /// Loads and parses a `budget.toml` configuration file.
 ///
 /// If the file does not exist, returns a default (empty) configuration
@@ -1505,11 +1525,8 @@ fn main() -> anyhow::Result<()> {
     // ── Preflight environment checks ──────────────────────────────────
     run_preflight_checks(args.quiet)?;
 
-    let toml_config = load_budget_toml("budget.toml")?;
-    let default_tolerance = resolve_tolerance(args.tolerance.as_deref(), &toml_config)
-        .context("failed to resolve tolerance")?;
-
-    let mode = Mode::from_args(&args);
+    let budget_toml_path = find_budget_toml();
+    let toml_config = load_budget_toml(&budget_toml_path)?;
 
     let network = args
         .network
