@@ -207,6 +207,26 @@ CI surfaces the exact metric and limit on the failing run. Re-measure with
 `cargo budget-report` and either optimize the function or consciously raise
 the limit.
 
+### Cross-Contract Workspace Support
+
+For workspaces with contracts that call each other, `cargo budget-report` provides:
+
+**1. Deployment ordering** — declare `deploy_order` in `budget.toml` to control the sequence of contract deployment:
+```toml
+deploy_order = ["token_contract", "amm_pool_contract"]
+```
+
+**2. Sibling address placeholders** — reference a sibling contract's deployed address in `[functions.*].args`:
+```toml
+[functions.do_cross_contract_work]
+args = ["--other", "{contract:helper_contract}", "--n", "10000"]
+```
+The placeholder `{contract:<package_name>}` is replaced with the actual deployed contract ID at simulation time.
+
+**3. Cost attribution** — when a function uses cross-contract arguments, the report includes a footnote stating that the reported costs are **inclusive** of the entire call chain (caller + all callees). The Soroban `simulateTransaction` API returns a single aggregate cost; per-contract decomposition is not available from the protocol.
+
+See the [Cross-Contract Testing documentation](docs/src/cross_contract_testing.md) for the full workflow.
+
 **Use Macros in Tests:**
 
 The macros (`budget_cpu_lt`, `budget_mem_lt`) are attribute macros for test functions. They require a local variable named **`env`** — the generated code reads `env.cost_estimate().budget()` by name.

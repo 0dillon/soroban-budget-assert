@@ -63,6 +63,28 @@ source = "alice"
 # Foreign top-level sections (e.g. [lints] for soroban-cost-linter) are
 # silently accepted so that both tools can share a single budget.toml.
 
+# -- Deployment ordering (cross-contract support) -------------------------
+# When contracts in the workspace call each other, their deployed addresses
+# must be known at simulation time. List packages in deployment order so that
+# earlier contracts are deployed before later ones.
+#
+#   deploy_order = ["token_contract", "amm_pool_contract"]
+#
+# Contracts not listed deploy in their natural workspace discovery order
+# after the ordered ones.
+# deploy_order = []
+
+# -- Cross-contract arguments -----------------------------------------------
+# Use the `{contract:<package_name>}` placeholder in args to reference a
+# sibling workspace member's deployed address. The placeholder is replaced
+# with the actual contract ID at simulation time.
+#
+#   [functions.do_cross_contract_work]
+#   args = ["--other", "{contract:helper_contract}", "--n", "10000"]
+#
+# The referenced package must be listed in `deploy_order` (see above) so that
+# it is deployed before the calling contract is simulated.
+
 [functions.do_expensive_work]
 args = ["--n", "10000"]
 cpu_limit = 5000000
@@ -235,6 +257,14 @@ struct BudgetToml {
     scenarios: HashMap<String, ScenarioToml>,
     #[serde(default)]
     functions: HashMap<String, FunctionConfig>,
+
+    /// Ordered list of package names for deployment. Contracts listed here
+    /// are deployed first, in the declared order. Contracts not listed deploy
+    /// in their natural workspace-discovery order after the ordered ones.
+    /// This is required when one contract's simulation depends on another
+    /// workspace member being already deployed.
+    #[serde(default)]
+    deploy_order: Option<Vec<String>>,
 }
 
 /// Per-metric margin multipliers persisted in `budget.toml`.
@@ -1208,6 +1238,42 @@ fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
+/// Resolve `{contract:<package_name>}` placeholder strings in simulation
+/// arguments by replacing them with the actual deployed contract ID.
+///
+/// This enables cross-contract simulation: a function that needs a sibling
+/// contract's address as an argument can use `{contract:other-package}` in
+/// `budget.toml`'s `[functions.*].args` list, and the CLI will substitute
+/// the real deployed contract ID at simulation time.
+///
+/// If the referenced package is not in `contract_ids` (e.g. deployment
+/// failed or the package name is misspelled), a warning is emitted and the
+/// placeholder is returned unchanged so the stellar CLI can produce its own
+/// meaningful error.
+fn resolve_contract_placeholder(
+    arg: &str,
+    contract_ids: &HashMap<String, String>,
+    quiet: bool,
+) -> String {
+    if let Some(inner) = arg.strip_prefix("{contract:") {
+        if let Some(pkg_name) = inner.strip_suffix('}') {
+            match contract_ids.get(pkg_name) {
+                Some(id) => return id.clone(),
+                None => {
+                    if !quiet {
+                        eprintln!(
+                            "Warning: cannot resolve '{{contract:{}}}' — package '{}' 
+                             has no deployed contract ID. Check deploy_order in budget.toml.",
+                            pkg_name, pkg_name
+                        );
+                    }
+                }
+            }
+        }
+    }
+    arg.to_string()
+}
+
 fn main() -> anyhow::Result<()> {
     let CargoCli::BudgetReport(args) = CargoCli::parse();
 
@@ -1265,15 +1331,56 @@ fn main() -> anyhow::Result<()> {
 
     let build_profile = args.profile.as_deref().unwrap_or("release");
 
-    for package in metadata.packages {
-        let is_cdylib = package
+    // ── Phase 0: Prepare package ordering ────────────────────────────
+    // Collect all cdylib packages and determine their deployment order.
+    let deploy_order_override = toml_config
+        .deploy_order
+        .clone()
+        .unwrap_or_default();
+
+    // Collect cdylib packages into a map for lookups.
+    let mut cdylib_packages: Vec<&cargo_metadata::Package> = Vec::new();
+    for pkg in &metadata.packages {
+        let is_cdylib = pkg
             .targets
             .iter()
             .any(|target| target.crate_types.iter().any(|ct| *ct == "cdylib"));
-        if !is_cdylib {
-            continue;
+        if is_cdylib {
+            cdylib_packages.push(pkg);
         }
+    }
 
+    // Sort packages: those in deploy_order come first (in declared order),
+    // then remaining packages in their natural discovery order.
+    let ordered_packages: Vec<&&cargo_metadata::Package> = {
+        let mut ordered = Vec::new();
+        let mut remaining: Vec<&&cargo_metadata::Package> = cdylib_packages
+            .iter()
+            .filter(|p| !deploy_order_override.contains(&p.name))
+            .collect();
+        for name in &deploy_order_override {
+            if let Some(pkg) = cdylib_packages.iter().find(|p| p.name == *name) {
+                ordered.push(pkg);
+            } else if !args.quiet {
+                eprintln!(
+                    "Warning: deploy_order references package '{}' which is not a cdylib or not in the workspace",
+                    name
+                );
+            }
+        }
+        ordered.extend(remaining);
+        ordered
+    };
+
+    // ── Phase 1: Build + Deploy all contracts ────────────────────────
+    // Collect contract IDs keyed by package name for use in Phase 2.
+    let mut contract_ids: HashMap<String, String> = HashMap::new();
+    // Track wasm sizes per package for later use.
+    let mut wasm_sizes: HashMap<String, u32> = HashMap::new();
+    // Track exported functions per package.
+    let mut exported_fns_map: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for package in &ordered_packages {
         if !args.quiet {
             eprintln!("Building package '{}' for wasm32...", package.name);
         }
@@ -1295,8 +1402,6 @@ fn main() -> anyhow::Result<()> {
         }
 
         // Locate the cdylib target to derive the correct WASM filename.
-        // A crate's [lib] name may differ from its package name, so we
-        // cannot rely on package.name.replace('-', "_").
         let cdylib_target = package
             .targets
             .iter()
@@ -1331,51 +1436,85 @@ fn main() -> anyhow::Result<()> {
         // Parse WASM exports
         let wasm_bytes = std::fs::read(&wasm_path)?;
         let wasm_size: u32 = wasm_bytes.len().try_into().unwrap_or(u32::MAX);
-        let mut exported_fns: HashSet<String> = HashSet::new();
+        wasm_sizes.insert(package.name.clone(), wasm_size);
 
-        for payload in WasmParser::new(0).parse_all(&wasm_bytes) {
-            if let wasmparser::Payload::ExportSection(export_section) = payload? {
+        let mut exported_fns: HashSet<String> = HashSet::new();
+        for payload in WasmParser::new(0).parse_all(&wasm_bytes)? {
+            if let wasmparser::Payload::ExportSection(export_section) = payload {
                 for export_item in export_section {
                     let export_item = export_item?;
                     if export_item.kind == wasmparser::ExternalKind::Func {
                         let name = export_item.name.to_string();
-                        // Ignore internal and common exports
                         if !name.starts_with('_') && name != "memory" {
                             exported_fns.insert(name);
                         }
                     }
                 }
-
-                let contents = fs::read_to_string(&entry_path).with_context(|| {
-                    format!("failed to read snapshot {}", entry_path.display())
-                })?;
-                let snapshot: Snapshot = serde_json::from_str(&contents).with_context(|| {
-                    format!("failed to parse snapshot {}", entry_path.display())
-                })?;
-                snapshots.push(snapshot);
             }
         }
+        exported_fns_map.insert(package.name.clone(), exported_fns);
 
-        eprintln!("Contract deployed at: {}", contract_id);
+        // Deploy the contract to the network.
+        if !args.quiet {
+            eprintln!("Deploying package '{}'...", package.name);
+        }
+        match deploy_contract_with_retry(&wasm_path, &source, &network, &package.name) {
+            Ok(contract_id) => {
+                if !args.quiet {
+                    eprintln!("Contract deployed at: {}", contract_id);
+                }
+                contract_ids.insert(package.name.clone(), contract_id);
+            }
+            Err(e) => {
+                eprintln!(
+                    "Error deploying {}: {}",
+                    package.name,
+                    e
+                );
+                has_errors = true;
+                continue;
+            }
+        }
+    }
+
+    // ── Phase 2: Simulate all exported functions ─────────────────────
+    // Now all contracts are deployed and their IDs are available for
+    // resolving `{contract:<package_name>}` placeholders in args.
+
+    for package in &ordered_packages {
+        let Some(contract_id) = contract_ids.get(&package.name) else {
+            // Deployment failed for this package; skip simulation.
+            continue;
+        };
+        let Some(exported_fns) = exported_fns_map.get(&package.name) else {
+            continue;
+        };
+        let wasm_size = wasm_sizes.get(&package.name).copied().unwrap_or(0);
 
         for function in exported_fns {
             if !args.quiet {
-                eprintln!("Simulating function '{}'...", function);
+                eprintln!("Simulating function '{}' on package '{}'...", function, package.name);
             }
 
-            let func_config = toml_config.functions.get(&function);
-            let func_args = func_config.map(|cfg| cfg.args.clone()).unwrap_or_default();
+            let func_config = toml_config.functions.get(function);
+            let raw_args = func_config.map(|cfg| cfg.args.clone()).unwrap_or_default();
 
-            match simulate_function(&contract_id, &source, &network, &function, &func_args)? {
+            // Resolve `{contract:<package_name>}` placeholders in the args
+            // list. Unknown package references produce a warning and are
+            // left as-is so the simulation can still fail with a clear
+            // stellar CLI error.
+            let func_args: Vec<String> = raw_args
+                .iter()
+                .map(|arg| resolve_contract_placeholder(arg, &contract_ids, args.quiet))
+                .collect();
+
+            match simulate_function(contract_id, &source, &network, function, &func_args)? {
                 SimulationOutcome::Metrics {
                     instructions,
                     read_bytes,
                     write_bytes,
                     transaction_data_xdr,
                 } => {
-                    // Record the measurement for baseline/snapshot mode. This
-                    // was previously only wired up in stale pre-refactor
-                    // code; it belongs here in the success arm.
                     let measured = MeasuredResources {
                         instructions: instructions as u64,
                         read_bytes: read_bytes as u64,
@@ -1386,9 +1525,10 @@ fn main() -> anyhow::Result<()> {
                         .or_default()
                         .insert(function.clone(), measured);
 
-                    // Build three CostReport entries for this function. In
-                    // --check mode, attach the configured limit and
-                    // pass/fail to each entry.
+                    // Build CostReport entries. If the function makes
+                    // cross-contract calls, note it in a comment-equivalent
+                    // field (not in the report value itself, but in the
+                    // --check summary or text report).
                     for (metric, value) in [
                         ("CPU Instructions", instructions),
                         ("Read Bytes", read_bytes),
@@ -1451,31 +1591,27 @@ fn main() -> anyhow::Result<()> {
                         match &failure {
                             SimulationFailure::Invoke(stderr) => {
                                 eprintln!(
-                                    "Warning: Simulation failed for {}: {}",
-                                    function, stderr
+                                    "Warning: Simulation failed for {} on {}: {}",
+                                    function, package.name, stderr
                                 );
                             }
                             SimulationFailure::Rpc(error) => {
-                                eprintln!("Warning: RPC error for {}: {}", function, error);
+                                eprintln!("Warning: RPC error for {} on {}: {}", function, package.name, error);
                             }
                             SimulationFailure::MetricsExtraction(err) => {
                                 eprintln!(
-                                    "Warning: Failed to extract metrics for {}: {}",
-                                    function, err
+                                    "Warning: Failed to extract metrics for {} on {}: {}",
+                                    function, package.name, err
                                 );
                             }
                         }
                     }
                     if let (true, Some(function_config)) = (args.check, func_config) {
-                        // A configured function that won't simulate cannot
-                        // satisfy any of its declared limits; record this as
-                        // a check failure even if no `*_limit` is set on
-                        // this row of budget.toml.
                         checks_failed = true;
                         emit_check_failure_entries(
                             &mut reports,
                             &package.name,
-                            &function,
+                            function,
                             function_config,
                         );
                     }
@@ -1492,7 +1628,6 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
-}
 
     // Per-function tolerance overrides from `budget.toml` (top-level plus
     // per-function). Built once so Mode::Check (baseline regression) and the
@@ -1624,6 +1759,21 @@ fn main() -> anyhow::Result<()> {
         println!("* Not measured: transaction size, ledger footprint entry counts, refundable fees (rent, events, return value), the inclusion fee, and therefore the total fee charged.");
         println!("* Note: These are simulated numbers on testnet and may vary slightly depending on ledger state.");
         println!("* See the \"Measurement scope\" section of the Tool Reference for what to use instead when you need those figures.");
+
+        // ── Cross-contract cost attribution note ────────────────────
+        // If any simulated function uses `{contract:...}` placeholders,
+        // its cost includes callee execution. Print a footnote so the
+        // user is not misled by silent aggregation.
+        let has_cross_contract_reports = reports.iter().any(|r| {
+            toml_config
+                .functions
+                .get(&r.function)
+                .map(|cfg| cfg.args.iter().any(|a| a.starts_with("{contract:")))
+                .unwrap_or(false)
+        });
+        if has_cross_contract_reports {
+            println!("* Cross-contract: functions using `{{contract:<package>}}` args report the *inclusive* cost of the caller + all callees. The Soroban `simulateTransaction` response does not decompose call-chain costs per contract.");
+        }
 
         // Fixed: was `if check` — `check` is not in scope here, this needs
         // to read the CLI flag `args.check`.

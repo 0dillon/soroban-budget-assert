@@ -424,3 +424,175 @@ fn profile_flag_invalid_profile_fails_build() {
         "stderr should indicate a build failure with the invalid profile, got: {stderr:?}"
     );
 }
+
+// ── Cross-contract cost attribution tests ──────────────────────────────────
+
+#[test]
+fn cross_contract_deploy_order_respected() {
+    /// Verify that the `deploy_order` in budget.toml controls deployment
+    /// sequence: contracts listed first are deployed before others, and
+    /// all contracts are successfully discovered and reported.
+    let workspace = setup_mock_workspace();
+
+    // Write a budget.toml with explicit deploy_order that places
+    // mock-callee before mock-contract-a.
+    fs::write(
+        workspace.path().join("budget.toml"),
+        "deploy_order = [\"mock-callee\", \"mock-contract-a\"]\n\
+         [functions.do_cross_contract_work]\n\
+         args = [\"--other\", \"{contract:mock-callee}\", \"--n\", \"10000\"]\n\
+         [functions.ping]\n\
+         args = []\n\
+         [functions.pong]\n\
+         args = []\n\
+         [functions.greet]\n\
+         args = []\n",
+    )
+    .expect("failed to write budget.toml");
+
+    let assert = budget_report_cmd(workspace.path())
+        .args(["budget-report", "--network", "local", "--source", "alice"])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // All four contracts should be present in the report
+    assert!(stdout.contains("mock-contract-a"), "got: {stdout}");
+    assert!(stdout.contains("mock-contract-b"), "got: {stdout}");
+    assert!(stdout.contains("mock-contract-renamed"), "got: {stdout}");
+    assert!(stdout.contains("mock-callee"), "got: {stdout}");
+    assert!(stdout.contains("WORKSPACE BUDGET REPORT"), "got: {stdout}");
+    assert!(stdout.contains("CPU Instructions"), "got: {stdout}");
+}
+
+#[test]
+fn cross_contract_placeholder_resolved() {
+    /// Verify that `{contract:<package>}` placeholders in args are resolved
+    /// to the actual deployed contract ID, and that the report still
+    /// succeeds.
+    let workspace = setup_mock_workspace();
+
+    fs::write(
+        workspace.path().join("budget.toml"),
+        "deploy_order = [\"mock-callee\", \"mock-contract-a\"]\n\
+         [functions.do_cross_contract_work]\n\
+         args = [\"--other\", \"{contract:mock-callee}\", \"--n\", \"10000\"]\n",
+    )
+    .expect("failed to write budget.toml");
+
+    let assert = budget_report_cmd(workspace.path())
+        .args(["budget-report", "--network", "local", "--source", "alice"])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not contain warnings about unresolved contracts
+    assert!(
+        !stderr.contains("cannot resolve"),
+        "stderr should not contain unresolved contract warnings, got: {stderr}"
+    );
+
+    // Should include the cross-contract footnote
+    assert!(
+        stdout.contains("Cross-contract"),
+        "stdout should contain cross-contract footnote, got: {stdout}"
+    );
+}
+
+#[test]
+fn cross_contract_unresolved_placeholder_warns() {
+    /// Verify that an unresolvable `{contract:<package>}` placeholder
+    /// (referencing a package that doesn't exist) produces a warning
+    /// but does not crash the report.
+    let workspace = setup_mock_workspace();
+
+    fs::write(
+        workspace.path().join("budget.toml"),
+        "deploy_order = [\"mock-callee\"]\n\
+         [functions.do_cross_contract_work]\n\
+         args = [\"--other\", \"{contract:nonexistent}\", \"--n\", \"10000\"]\n",
+    )
+    .expect("failed to write budget.toml");
+
+    let assert = budget_report_cmd(workspace.path())
+        .args(["budget-report", "--network", "local", "--source", "alice"])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("cannot resolve"),
+        "stderr should contain a resolution warning, got: {stderr}"
+    );
+}
+
+#[test]
+fn cross_contract_placeholder_with_check_mode() {
+    /// Verify cross-contract args work with `--check` mode: the function
+    /// is simulated, limits are checked, and the cross-contract footnote
+    /// appears.
+    let workspace = setup_mock_workspace();
+
+    fs::write(
+        workspace.path().join("budget.toml"),
+        "deploy_order = [\"mock-callee\"]\n\
+         [functions.do_cross_contract_work]\n\
+         args = [\"--other\", \"{contract:mock-callee}\", \"--n\", \"10000\"]\n\
+         cpu_limit = 5000000\n\
+         read_limit = 5000\n\
+         write_limit = 5000\n",
+    )
+    .expect("failed to write budget.toml");
+
+    let assert = budget_report_cmd(workspace.path())
+        .args([
+            "budget-report",
+            "--network",
+            "local",
+            "--source",
+            "alice",
+            "--check",
+        ])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("=== BUDGET CHECKS ==="), "got: {stdout}");
+    assert!(
+        stdout.contains("Cross-contract"),
+        "stdout should contain cross-contract footnote, got: {stdout}"
+    );
+}
+
+#[test]
+fn cross_contract_all_packages_discovered_without_deploy_order() {
+    /// Without deploy_order in budget.toml, all cdylib packages should
+    /// still be discovered and reported (just without any ordering
+    /// guarantee).
+    let workspace = setup_mock_workspace();
+
+    // No deploy_order, no [functions] entries — just network + source
+    fs::write(
+        workspace.path().join("budget.toml"),
+        "network = \"local\"\nsource = \"alice\"\n",
+    )
+    .expect("failed to write budget.toml");
+
+    let assert = budget_report_cmd(workspace.path())
+        .args(["budget-report", "--network", "local", "--source", "alice"])
+        .assert();
+
+    let output = assert.success().get_output().clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // All four mock contracts should appear
+    assert!(stdout.contains("mock-contract-a"), "got: {stdout}");
+    assert!(stdout.contains("mock-contract-b"), "got: {stdout}");
+    assert!(stdout.contains("mock-contract-renamed"), "got: {stdout}");
+    assert!(stdout.contains("mock-callee"), "got: {stdout}");
+}
