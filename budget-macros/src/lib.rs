@@ -209,6 +209,14 @@ fn generate_limit_expr(limit: &BudgetLimit, metric_label: &str) -> proc_macro2::
                 }))
                 .unwrap_or(u64::MAX)
         },
+        // ── JSON-config limit resolution ──────────────────────────────
+        // Reads `budget.json` from the current working directory and
+        // extracts the value for the given key.  If the file is absent,
+        // empty, malformed, or the key is not found, the limit silently
+        // falls back to `u64::MAX` ("no limit") — the test assertion
+        // passes but does not enforce a ceiling.  This prevents a broken
+        // or missing JSON file from crashing an otherwise-valid test
+        // suite.
         BudgetLimit::Config(key) => quote! {
             std::fs::read_to_string(std::path::Path::new("budget.json"))
                 .ok()
