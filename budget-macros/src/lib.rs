@@ -73,12 +73,15 @@ impl Parse for BudgetLimit {
             // tokens for other spec keys (`cpu`, `mem`, `env_ident`).
             // Only consume key=value pairs whose key is a known
             // BudgetLimit key; stop before anything else.
+            // `fork()`, not `clone()`: `ParseStream` is `&ParseBuffer`, so
+            // cloning the reference aliases the same buffer and the
+            // "lookahead" parse below would consume from the real stream.
             if input.peek(Token![,]) {
-                let ahead = input.clone();
+                let ahead = input.fork();
                 let _ = ahead.parse::<Token![,]>();
                 if !(ahead.peek(Ident)
                     && matches!(
-                        ahead.clone().parse::<Ident>().unwrap().to_string().as_str(),
+                        ahead.fork().parse::<Ident>().unwrap().to_string().as_str(),
                         "env" | "env_file" | "config"
                     ))
                 {
@@ -86,7 +89,7 @@ impl Parse for BudgetLimit {
                 }
                 input.parse::<Token![,]>()?;
             } else if input.peek(Ident) {
-                let ahead = input.clone();
+                let ahead = input.fork();
                 let key: Ident = ahead.parse().unwrap();
                 if !matches!(key.to_string().as_str(), "env" | "env_file" | "config") {
                     break;
@@ -499,28 +502,7 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
 
     let stmts = &input_fn.block.stmts;
 
-    let limit_expr = match limit {
-        BudgetLimit::Int(n) => quote! { #n },
-        BudgetLimit::EnvVar(var) => quote! {
-            std::env::var(#var)
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(u64::MAX)
-        },
-        BudgetLimit::Config(key) => quote! {
-            std::fs::read_to_string(std::path::Path::new("budget.json"))
-                .ok()
-                .map(|content| {
-                    parse_config_value(&content, #key).unwrap_or_else(|| {
-                        panic!(
-                            "budget_write_bytes_lt: key '{}' not found or invalid in budget.json",
-                            #key,
-                        )
-                    })
-                })
-                .unwrap_or(u64::MAX)
-        },
-    };
+    let limit_expr = generate_limit_expr(&limit, "budget_write_bytes_lt");
 
     let env_ident = proc_macro2::Ident::new("env", proc_macro2::Span::call_site());
 
