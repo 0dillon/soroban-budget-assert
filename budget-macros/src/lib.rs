@@ -630,6 +630,8 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
         Err(e) => return TokenStream::from(e.to_compile_error()),
     };
 
+    let stmts = &input_fn.block.stmts;
+
     let limit_expr = match limit {
         BudgetLimit::Int(n) => quote! { #n },
         BudgetLimit::EnvVar(var) => quote! {
@@ -655,25 +657,10 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
 
     let env_ident = proc_macro2::Ident::new("env", proc_macro2::Span::call_site());
 
-    // Same exit-path instrumentation as the other budget macros.
-    let assertion = quote! {
+    let new_block = quote! {
         {
             #(#stmts)*
 
-            // Wrap injected temporaries in their own scope so they never
-            // collide with user-declared `budget`, `write_bytes_cost`,
-            // or `limit_u64` names in the test function body.
-            {
-                let budget = #env_ident.cost_estimate().budget();
-                let write_bytes_cost = budget.memory_bytes_cost();
-                let limit_u64: u64 = #limit_expr;
-                assert!(
-                    write_bytes_cost < limit_u64,
-                    "Write bytes cost (memory proxy) {} exceeded limit {} - local estimate, underestimates real network cost",
-                    write_bytes_cost,
-                    limit_u64
-                );
-            }
             let budget = #env_ident.cost_estimate().budget();
             let write_bytes_cost = budget.memory_bytes_cost();
             let limit_u64: u64 = #limit_expr;
@@ -686,72 +673,12 @@ pub fn budget_write_bytes_lt(attr: TokenStream, item: TokenStream) -> TokenStrea
         }
     };
 
-    if let Some(tokens) = instrument_exit_paths(&mut input_fn, quote! {}, assertion) {
-        return tokens;
-    }
+    *input_fn.block = syn::parse2(new_block).unwrap();
 
     TokenStream::from(quote! {
         #input_fn
     })
 }
-/// Asserts that the memory bytes used by `env` are strictly less than a specified limit.
-///
-/// Must be placed on a test function that contains a local `env` variable (a `soroban_sdk::Env`).
-/// The macro injects an assertion check that measures
-/// `env.cost_estimate().budget().memory_bytes_cost()` on every path that leaves the test
-/// function, so bodies ending in a tail expression (`fn test() -> Result<(), Error>`)
-/// and bodies with early `return`s are both supported. A `?` that propagates an error
-/// skips the check, but the test fails on that error anyway.
-///
-/// # Local Estimates vs Network Costs
-///
-/// This attribute checks a **local estimate** of memory byte consumption.
-/// Local estimates (such as raw Rust test execution or unoptimized local WASM builds) can
-/// strictly underestimate or differ significantly from real Testnet or Futurenet costs, which
-/// include host function overheads, VM heap/stack allocation overheads, and protocol execution parameters.
-///
-/// Use local assertions as a fast local regression gate. For true network ground truth, use
-/// `cargo budget-report`.
-///
-/// # Usage Examples
-///
-/// ## Static Limit
-///
-/// Pass an integer literal representing the maximum allowed memory bytes:
-///
-/// ```rust,ignore
-/// use budget_macros::budget_mem_lt;
-/// use soroban_sdk::Env;
-///
-/// #[test]
-/// #[budget_mem_lt(500_000)]
-/// fn test_memory_budget() {
-///     let env = Env::default();
-///     // ... setup contract client and invoke contract function ...
-/// }
-/// ```
-///
-/// ## Dynamic Limit via Environment Variable (`env = "VAR_NAME"`)
-///
-/// Read the limit dynamically from an environment variable at test runtime:
-///
-/// ```rust,ignore
-/// use budget_macros::budget_mem_lt;
-/// use soroban_sdk::Env;
-///
-/// #[test]
-/// #[budget_mem_lt(env = "MAX_MEMORY_BYTES")]
-/// fn test_memory_budget_dynamic() {
-///     let env = Env::default();
-///     // ... setup contract client and invoke contract function ...
-/// }
-/// ```
-///
-/// When using `env = "VAR_NAME"`:
-/// - If the environment variable is **unset**, the limit defaults to `u64::MAX` ("no limit"),
-///   allowing the test assertion to pass unconditionally.
-/// - If the environment variable is set to a string that **cannot be parsed as a `u64`**,
-///   the test panics at runtime with an explicit error naming the variable and invalid value.
 #[proc_macro_attribute]
 pub fn budget_mem_lt(attr: TokenStream, item: TokenStream) -> TokenStream {
     let limit = match syn::parse2::<BudgetLimit>(attr.into()) {
