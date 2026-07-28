@@ -115,6 +115,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(
@@ -130,6 +131,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "Read Bytes"), Some(1_000));
@@ -142,6 +144,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "Write Bytes"), Some(500));
@@ -154,6 +157,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            mem_limit: None,
             tolerance: None,
         };
         // An empty or unknown metric string should return None.
@@ -167,6 +171,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "WASM Bytes"), None);
@@ -180,6 +185,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: None,
             read_limit: None,
             write_limit: None,
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "CPU Instructions"), None);
@@ -310,10 +316,12 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "my-pkg", "do_work", &config);
-        assert_eq!(reports.len(), 3);
+        // 4 failure stubs (CPU, Memory, Read, Write).
+        assert_eq!(reports.len(), 4);
     }
 
     #[test]
@@ -324,6 +332,7 @@ mod off_by_one_and_zero_length_tests {
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "my-pkg", "do_work", &config);
@@ -340,7 +349,8 @@ mod off_by_one_and_zero_length_tests {
         let mut reports = Vec::new();
         let config = FunctionConfig::default();
         emit_check_failure_entries(&mut reports, "pkg", "", &config);
-        assert_eq!(reports.len(), 3);
+        // 4 failure stubs (CPU, Memory, Read, Write); zero function name.
+        assert_eq!(reports.len(), 4);
         assert_eq!(reports[0].function, "");
     }
 
@@ -349,7 +359,8 @@ mod off_by_one_and_zero_length_tests {
         let mut reports = Vec::new();
         let config = FunctionConfig::default();
         emit_check_failure_entries(&mut reports, "", "do_work", &config);
-        assert_eq!(reports.len(), 3);
+        // 4 failure stubs (CPU, Memory, Read, Write); zero package name.
+        assert_eq!(reports.len(), 4);
         assert_eq!(reports[0].package, "");
     }
 
@@ -583,6 +594,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, " CPU Instructions"), None);
@@ -596,6 +608,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: None,
+            mem_limit: None,
             tolerance: None,
         };
         assert_eq!(limit_for_metric(&config, "CPU Instructions "), None);
@@ -609,6 +622,7 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: Some(1_000),
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         // The function should do exact case-sensitive matching.
@@ -711,17 +725,20 @@ write_limit = 0
             cpu_limit: Some(5_000_000),
             read_limit: None,
             write_limit: Some(500),
+            mem_limit: None,
             tolerance: None,
         };
         emit_check_failure_entries(&mut reports, "pkg", "fn", &config);
-        assert_eq!(reports.len(), 3);
-        // Must be emitted in order: CPU, Read, Write.
+        // 4 failure stubs; iteration order is [CPU, Memory, Read, Write].
+        assert_eq!(reports.len(), 4);
         assert_eq!(reports[0].metric, "CPU Instructions");
         assert_eq!(reports[0].limit, Some(5_000_000));
-        assert_eq!(reports[1].metric, "Read Bytes");
+        assert_eq!(reports[1].metric, "Memory Bytes");
         assert_eq!(reports[1].limit, None);
-        assert_eq!(reports[2].metric, "Write Bytes");
-        assert_eq!(reports[2].limit, Some(500));
+        assert_eq!(reports[2].metric, "Read Bytes");
+        assert_eq!(reports[2].limit, None);
+        assert_eq!(reports[3].metric, "Write Bytes");
+        assert_eq!(reports[3].limit, Some(500));
         // All should have pass = false.
         for r in &reports {
             assert_eq!(r.pass, Some(false));
@@ -733,7 +750,9 @@ write_limit = 0
         let mut reports = Vec::new();
         let config = FunctionConfig::default();
         emit_check_failure_entries(&mut reports, "pkg", "fn", &config);
-        assert_eq!(reports.len(), 3);
+        // 4 failure stubs (CPU, Memory, Read, Write); all limits are None
+        // because the default `FunctionConfig` has every limit unset.
+        assert_eq!(reports.len(), 4);
         for r in &reports {
             assert_eq!(r.limit, None);
             assert_eq!(r.pass, Some(false));
