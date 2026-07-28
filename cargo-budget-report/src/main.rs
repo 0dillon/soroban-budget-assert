@@ -405,6 +405,8 @@ fn main() -> Result<()> {
                         "POST",
                         "-H",
                         "Content-Type: application/json",
+                        "--max-time",
+                        "30",
                         "-d",
                         "@-",
                         "https://soroban-testnet.stellar.org:443",
