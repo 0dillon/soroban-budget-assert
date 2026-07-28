@@ -22,6 +22,8 @@ use wasmparser::Parser as WasmParser;
 
 mod derive;
 mod module_10;
+mod module_16;
+mod module_20;
 
 /// Maximum number of total deployment attempts (1 initial + 3 retries)
 /// when friendbot funding is suspected to have failed transiently
