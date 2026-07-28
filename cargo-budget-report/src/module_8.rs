@@ -403,6 +403,7 @@ mod off_by_one_and_zero_length_tests {
             value: Some(0),
             limit: None,
             pass: None,
+            ..Default::default()
         }];
         let csv = reports_to_csv(&reports, false);
         assert!(csv.contains(",0\n") || csv.contains(",0\r\n"));
@@ -417,6 +418,7 @@ mod off_by_one_and_zero_length_tests {
             value: Some(0),
             limit: Some(0),
             pass: Some(true),
+            ..Default::default()
         }];
         let csv = reports_to_csv(&reports, true);
         assert!(csv.contains(",0,0,true"));
