@@ -1671,6 +1671,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+mod module_2;
 pub mod validate;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
