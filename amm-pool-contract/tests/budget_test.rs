@@ -39,6 +39,45 @@ fn test_budget_raw_rust() {
 }
 
 #[test]
+fn measure_gap_vs_input_size_native_rust() {
+    for &n in &[1_000, 10_000, 50_000, 100_000] {
+        let env = Env::default();
+        let contract_id = env.register(ConstantProductPool, ());
+        let client = ConstantProductPoolClient::new(&env, &contract_id);
+        env.cost_estimate().budget().reset_unlimited();
+        client.do_expensive_work(&n);
+        let budget = env.cost_estimate().budget();
+        println!(
+            "NATIVE_RUST, n={}: CPU instructions = {}",
+            n,
+            budget.cpu_instruction_cost()
+        );
+    }
+}
+
+#[test]
+fn measure_gap_vs_input_size_wasm_local() {
+    let wasm_path = "../target/wasm32-unknown-unknown/release/amm_pool_contract.wasm";
+    let wasm = std::fs::read(wasm_path).expect("WASM file not found, did you run cargo build?");
+    for &n in &[1_000, 10_000, 50_000, 100_000] {
+        let env = Env::default();
+        #[allow(deprecated)]
+        let contract_id = env.register_contract_wasm(None, wasm.as_slice());
+        let client = ConstantProductPoolClient::new(&env, &contract_id);
+        client.initialize();
+        env.mock_all_auths();
+        env.cost_estimate().budget().reset_unlimited();
+        client.do_expensive_work(&n);
+        let budget = env.cost_estimate().budget();
+        println!(
+            "WASM_LOCAL, n={}: CPU instructions = {}",
+            n,
+            budget.cpu_instruction_cost()
+        );
+    }
+}
+
+#[test]
 fn test_budget_wasm() {
     let env = Env::default();
     let (client, user) = setup_wasm(&env);
