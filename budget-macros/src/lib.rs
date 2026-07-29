@@ -7,7 +7,7 @@ use syn::{parse::Parse, parse::ParseStream, Expr, Ident, ItemFn, LitInt, LitStr,
 enum BudgetLimit {
     /// A literal integer limit provided directly in the attribute.
     Int(u64),
-    EnvVar(String),
+    EnvVar(String, Option<u64>),
     Config(String),
     // TODO: Add support for parsing a default value if the env var is missing
 }
@@ -24,7 +24,24 @@ impl Parse for BudgetLimit {
             input.parse::<Token![=]>()?;
             let lit: LitStr = input.parse()?;
             match ident.to_string().as_str() {
-                "env" => Ok(BudgetLimit::EnvVar(lit.value())),
+                "env" => {
+                    let raw = lit.value();
+                    let (var, default) = match raw.find(':') {
+                        Some(pos) => {
+                            let var = raw[..pos].to_string();
+                            let default_str = &raw[pos + 1..];
+                            let default_val: u64 = default_str.parse().map_err(|e| {
+                                syn::Error::new(
+                                    lit.span(),
+                                    format!("invalid default value after ':' in env string: {}", e),
+                                )
+                            })?;
+                            (var, Some(default_val))
+                        }
+                        None => (raw, None),
+                    };
+                    Ok(BudgetLimit::EnvVar(var, default))
+                }
                 "config" => Ok(BudgetLimit::Config(lit.value())),
                 other => Err(syn::Error::new(
                     ident.span(),
@@ -64,27 +81,25 @@ fn generate_budget_assert(
 
     let limit_expr = match limit {
         BudgetLimit::Int(n) => quote! { #n },
-        BudgetLimit::EnvVar(var) => quote! {
-            match budget_env_resolve(#var) {
-                Some(s) => s.parse::<u64>().unwrap_or_else(|_| {
-                    panic!(
-                        "{}: env var {}={:?} is not a valid u64",
-                        #metric_label,
-                        #var,
-                        s
-                    )
-                }),
-                None => u64::MAX,
+        BudgetLimit::EnvVar(var, default) => {
+            let fallback = match default {
+                Some(d) => quote! { #d },
+                None => quote! { u64::MAX },
+            };
+            quote! {
+                match budget_env_resolve(#var) {
+                    Some(s) => s.parse::<u64>().unwrap_or_else(|_| {
+                        panic!(
+                            "{}: env var {}={:?} is not a valid u64",
+                            #metric_label,
+                            #var,
+                            s
+                        )
+                    }),
+                    None => #fallback,
+                }
             }
-        },
-        // ── JSON-config limit resolution ──────────────────────────────
-        // Reads `budget.json` from the current working directory and
-        // extracts the value for the given key.  If the file is absent,
-        // empty, malformed, or the key is not found, the limit silently
-        // falls back to `u64::MAX` ("no limit") — the test assertion
-        // passes but does not enforce a ceiling.  This prevents a broken
-        // or missing JSON file from crashing an otherwise-valid test
-        // suite.
+        }
         BudgetLimit::Config(key) => quote! {
             {
                 let path = std::path::Path::new("budget.json");
