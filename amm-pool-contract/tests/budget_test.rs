@@ -554,6 +554,58 @@ fn test_read_bytes_budget_exceeds_limit() {
     );
 }
 
+// =======================================================================
+// Failing budget assertion tests — Issue #48
+// =======================================================================
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1)]
+fn test_budget_cpu_fails_when_exceeded() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    client.burn_resources(&500);
+}
+
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_mem_lt(1)]
+fn test_budget_mem_fails_when_exceeded() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    client.burn_resources(&500);
+}
+
+#[test]
+#[budget_cpu_lt(18_446_744_073_709_551_615)]
+fn test_budget_cpu_passes_when_under_limit() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    client.burn_resources(&10);
+}
+
+#[test]
+#[budget_mem_lt(18_446_744_073_709_551_615)]
+fn test_budget_mem_passes_when_under_limit() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    client.burn_resources(&10);
 /// Local WASM measurement capturing the memory-bytes cost of the pure
 /// allocation fixture `allocate_vec` for issue #122.
 ///

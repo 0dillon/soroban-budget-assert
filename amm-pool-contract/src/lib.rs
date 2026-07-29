@@ -244,6 +244,29 @@ impl ConstantProductPool {
         result
     }
 
+    pub fn burn_resources(env: Env, n: u32) -> u32 {
+        let mut acc: u32 = 0;
+
+        for i in 0..n {
+            acc = acc.wrapping_add(i.wrapping_mul(i).wrapping_add(1));
+            for j in 0..n.min(100) {
+                acc = acc.wrapping_add(j.wrapping_mul(j));
+            }
+        }
+
+        let mut vec = Vec::new(&env);
+        for i in 0..n.min(200) {
+            vec.push_back(i);
+        }
+        env.storage().instance().set(&symbol_short!("burn"), &vec);
+
+        let mut vec2 = Vec::new(&env);
+        for i in 0..n.min(200) {
+            vec2.push_back(i.wrapping_mul(i));
+        }
+        env.storage().instance().set(&symbol_short!("brn2"), &vec2);
+
+        acc
     pub fn do_cross_contract_work(env: Env, other: Address, n: u32) -> u32 {
         let mut result: u32 = 0;
         // ── Cross-contract CPU benchmark loop ─────────────────────────
