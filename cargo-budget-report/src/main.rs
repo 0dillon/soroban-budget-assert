@@ -83,8 +83,22 @@ source = "alice"
 #   read_limit = 5000             # optional, inclusive read-bytes limit
 #   write_limit = 1000            # optional, inclusive write-bytes limit
 #
-# A missing `*_limit` field means that metric is reported but not enforced.
+#   # Percentage-based limits (mutually exclusive with the corresponding
+#   # `*_limit`).  Resolved against the protocol max at runtime:
+#   #   CPU Instructions → 10 000 000  inst.
+#   #   Read Bytes       →  1 048 576  B
+#   #   Write Bytes      →  1 048 576  B
+#   # Examples:
+#   cpu_limit_pct  = 50   #  50 % of max CPU = 5 000 000 inst.
+#   read_limit_pct = 10   #  10 % of max read =   104 857 B
+#   write_limit_pct = 5   #   5 % of max write =   52 428 B
+#
+# A missing `*_limit` (or `*_limit_pct`) means that metric is reported but not enforced.
 # See `cargo budget-report --check` for limit enforcement.
+# Unknown keys inside a [functions.*] block produce an error.
+#
+# Foreign top-level sections (e.g. [lints] for soroban-cost-linter) are
+# silently accepted so that both tools can share a single budget.toml.
 
 [functions.do_expensive_work]
 args = ["--n", "10000"]
@@ -302,6 +316,11 @@ fn build_markdown_report(reports: &[CostReport]) -> String {
 }
 
 /// Returns the configured limit (if any) for the given metric name.
+///
+/// This returns the *raw* configured value — either an absolute limit
+/// (`cpu_limit`, `read_limit`, `write_limit`) or a percentage
+/// (`cpu_limit_pct`, `read_limit_pct`, `write_limit_pct`). Use
+/// [`resolve_limit`] to convert a percentage into an absolute value.
 fn limit_for_metric(func_config: &FunctionConfig, metric: &str) -> Option<u64> {
     match metric {
         "CPU Instructions" => func_config.cpu_limit,
@@ -1629,6 +1648,269 @@ mod tests {
         assert!(err_text.contains("failed to parse"));
         assert!(err_text.contains("line") || err_text.contains("Line"));
         assert!(err_text.contains("column") || err_text.contains("Column"));
+    }
+
+    #[test]
+    fn budget_toml_parses_global_and_per_function_tolerance() {
+        let path = unique_test_path();
+        fs::write(
+            &path,
+            "network = \"testnet\"\ntolerance = 0.10\n\
+             [functions.do_expensive_work]\nargs = [\"--n\", \"10\"]\ntolerance = 0.05\n",
+        )
+        .expect("failed to write budget.toml");
+        let config = load_budget_toml(&path).expect("parse should succeed");
+        assert_eq!(config.tolerance, Some(0.10));
+        let func = config
+            .functions
+            .get("do_expensive_work")
+            .expect("function present");
+        assert_eq!(func.tolerance, Some(0.05));
+    }
+
+    // --- Tolerance resolution ----------------------------------------------
+
+    #[test]
+    fn resolve_tolerance_precedence_cli_over_toml_over_default() {
+        let config = BudgetToml {
+            tolerance: Some(0.25),
+            ..Default::default()
+        };
+        let t = resolve_tolerance(Some("0.42"), &config).expect("cli should win");
+        assert!((t.value - 0.42).abs() < f64::EPSILON);
+
+        let t = resolve_tolerance(None, &config).expect("toml should win");
+        assert!((t.value - 0.25).abs() < f64::EPSILON);
+
+        let empty = BudgetToml::default();
+        let t = resolve_tolerance(None, &empty).expect("default should win");
+        assert!((t.value - 0.10).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn resolve_tolerance_rejects_invalid_cli() {
+        let config = BudgetToml::default();
+        let err = resolve_tolerance(Some("nope"), &config)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("tolerance must be a number"), "got: {err}");
+    }
+
+    // --- Mode dispatch ------------------------------------------------------
+
+    #[test]
+    fn mode_defaults_to_report_when_no_flags() {
+        let args = BudgetReportArgs {
+            init: false,
+            force: false,
+            network: None,
+            source: None,
+            json: false,
+            check: false,
+            csv: false,
+            record_baseline: None,
+            check_baseline: None,
+            tolerance: None,
+            quiet: false,
+            validate: false,
+            profile: None,
+            derive_limits: None,
+            from: None,
+            margin_cpu: None,
+            margin_memory: None,
+            margin_read: None,
+            margin_write: None,
+            provenance_out: None,
+            totals: false,
+        };
+        assert_eq!(Mode::from_args(&args), Mode::Report);
+    }
+
+    #[test]
+    fn mode_distinguishes_record_and_check() {
+        let record = BudgetReportArgs {
+            init: false,
+            force: false,
+            network: None,
+            source: None,
+            json: false,
+            check: false,
+            csv: false,
+            record_baseline: Some("budget-baseline.toml".to_string()),
+            check_baseline: None,
+            tolerance: None,
+            quiet: false,
+            validate: false,
+            profile: None,
+            derive_limits: None,
+            from: None,
+            margin_cpu: None,
+            margin_memory: None,
+            margin_read: None,
+            margin_write: None,
+            provenance_out: None,
+            totals: false,
+        };
+        assert_eq!(
+            Mode::from_args(&record),
+            Mode::Record(PathBuf::from("budget-baseline.toml"))
+        );
+
+        let check = BudgetReportArgs {
+            init: false,
+            force: false,
+            network: None,
+            source: None,
+            json: false,
+            check: false,
+            csv: false,
+            record_baseline: None,
+            check_baseline: Some("custom.toml".to_string()),
+            tolerance: None,
+            quiet: false,
+            validate: false,
+            profile: None,
+            derive_limits: None,
+            from: None,
+            margin_cpu: None,
+            margin_memory: None,
+            margin_read: None,
+            margin_write: None,
+            provenance_out: None,
+            totals: false,
+        };
+        assert_eq!(
+            Mode::from_args(&check),
+            Mode::Check(PathBuf::from("custom.toml"))
+        );
+    }
+
+    #[test]
+    fn mode_detects_derive() {
+        let args = BudgetReportArgs {
+            init: false,
+            force: false,
+            network: None,
+            source: None,
+            json: false,
+            check: false,
+            csv: false,
+            record_baseline: None,
+            check_baseline: None,
+            tolerance: None,
+            quiet: false,
+            validate: false,
+            profile: None,
+            derive_limits: Some("tier-a-limits.env".to_string()),
+            from: None,
+            margin_cpu: None,
+            margin_memory: None,
+            margin_read: None,
+            margin_write: None,
+            provenance_out: None,
+            totals: false,
+        };
+        match Mode::from_args(&args) {
+            Mode::Derive(out, _) => assert_eq!(out, PathBuf::from("tier-a-limits.env")),
+            other => panic!("expected Derive mode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_budget_toml_parses_with_foreign_sections() {
+        let config: BudgetToml = toml::from_str(SHARED_BUDGET_TOML)
+            .expect("shared budget.toml with foreign [lints] section should parse");
+        assert_eq!(config.network.as_deref(), Some("testnet"));
+        assert_eq!(config.source.as_deref(), Some("alice"));
+        assert!(config.functions.contains_key("do_expensive_work"));
+        assert!(config.functions.contains_key("require_auth_only"));
+    }
+
+    #[test]
+    fn unknown_function_keys_produce_error() {
+        let err =
+            toml::from_str::<BudgetToml>("[functions.do_expensive_work]\ncpu_lmit = 5000000\n")
+                .unwrap_err();
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("unknown field") || err_text.contains("cpu_lmit"),
+            "expected error mentioning unknown field or the offending key, got: {err_text}"
+        );
+    }
+
+    #[test]
+    fn known_function_key_spelling_produces_correct_deserialization() {
+        let config: BudgetToml = toml::from_str(
+            r#"
+[functions.do_expensive_work]
+cpu_limit = 5000000
+read_limit = 5000
+write_limit = 1000
+"#,
+        )
+        .expect("valid function config should parse");
+        let func = &config.functions["do_expensive_work"];
+        assert_eq!(func.cpu_limit, Some(5000000));
+        assert_eq!(func.read_limit, Some(5000));
+        assert_eq!(func.write_limit, Some(1000));
+    }
+
+    #[test]
+    fn percentage_limits_parse_correctly_from_toml() {
+        let config: BudgetToml = toml::from_str(
+            r#"
+[functions.do_expensive_work]
+cpu_limit_pct = 50
+read_limit_pct = 10
+write_limit_pct = 5
+"#,
+        )
+        .expect("valid function config with percentage limits should parse");
+        let func = &config.functions["do_expensive_work"];
+        assert_eq!(func.cpu_limit, None);
+        assert_eq!(func.cpu_limit_pct, Some(50));
+        assert_eq!(func.read_limit, None);
+        assert_eq!(func.read_limit_pct, Some(10));
+        assert_eq!(func.write_limit, None);
+        assert_eq!(func.write_limit_pct, Some(5));
+    }
+
+    #[test]
+    fn mixed_absolute_and_percentage_limits_parse_correctly() {
+        let config: BudgetToml = toml::from_str(
+            r#"
+[functions.do_expensive_work]
+cpu_limit = 5000000
+read_limit_pct = 25
+write_limit = 1000
+"#,
+        )
+        .expect("mixed absolute and percentage limits should parse");
+        let func = &config.functions["do_expensive_work"];
+        assert_eq!(func.cpu_limit, Some(5000000));
+        assert_eq!(func.cpu_limit_pct, None);
+        assert_eq!(func.read_limit, None);
+        assert_eq!(func.read_limit_pct, Some(25));
+        assert_eq!(func.write_limit, Some(1000));
+        assert_eq!(func.write_limit_pct, None);
+    }
+
+    #[test]
+    fn percentage_limits_report_only_no_absolute_limits() {
+        let config: BudgetToml = toml::from_str(
+            r#"
+[functions.do_expensive_work]
+cpu_limit_pct = 50
+"#,
+        )
+        .expect("percentage-only config should parse");
+        let func = &config.functions["do_expensive_work"];
+        assert_eq!(func.cpu_limit, None);
+        assert_eq!(func.cpu_limit_pct, Some(50));
+        assert_eq!(func.read_limit, None);
+        assert_eq!(func.read_limit_pct, None);
+        assert_eq!(func.write_limit, None);
+        assert_eq!(func.write_limit_pct, None);
     }
 
     // --- TransactionData deserialization tests ---
