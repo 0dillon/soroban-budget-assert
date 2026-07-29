@@ -37,6 +37,9 @@ These figures were produced during the initial tool development and are publishe
 | Storage write (WASM) | 36,840 | 44,512 | −17.2% | `amm-pool-contract::write_bytes(1,024 bytes)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2026-07-26 |
 | Storage read (WASM) | — | — | — | `amm-pool-contract::do_read_heavy_work(100)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
 | Host-function calls (WASM) | 1,280,000 | 1,600,000 | −20.0% | `host-function-contract::repeated_sequence(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q2 |
+| TTL extension (WASM) | — | — | — | `amm-pool-contract::extend_instance_ttl(100, 10_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85.0 | — |
+
+> **TTL extension note.** The TTL extension fixture registers the contract as WASM, initializes it (creating instance storage entries), then calls `extend_instance_ttl(threshold=100, extend_to=10_000)`. Local estimate collected via `cargo test -p amm-pool-contract --test calibrate_extend_ttl -- --nocapture`. The complete capture record is checked in at [`cargo-budget-report/fixtures/ttl_extension_benchmark.json`](cargo-budget-report/fixtures/ttl_extension_benchmark.json). Network figure requires a `simulateTransaction` run on Soroban testnet (see fixture for exact commands).
 
 The native Rust row is included solely to illustrate that native estimates are unreliable for budget decisions. Only WASM-mode estimates should be used for assertions.
 
@@ -199,6 +202,7 @@ The following operation types have open measurement issues and no published figu
 
 | Operation type | Issue | Status |
 |---|---|---|
+| TTL extension | TBD | In progress — calibration test at `amm-pool-contract/tests/calibrate_extend_ttl.rs` |
 | Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
 | Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Open |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Open |
