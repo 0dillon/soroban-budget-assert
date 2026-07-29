@@ -154,4 +154,7 @@ pub enum SimulationFailure {
     Rpc(String),
     /// The RPC response didn't contain a decodable `SorobanTransactionData`.
     MetricsExtraction(String),
+    /// A spawn or IO error on the `stellar`/`curl` subprocess itself
+    /// (not a failure returned *by* the subprocess).
+    Spawn(String),
 }
