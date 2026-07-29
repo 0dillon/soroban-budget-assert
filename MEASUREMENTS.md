@@ -36,6 +36,7 @@ These figures were produced during the initial tool development and are publishe
 | Mixed compute + storage (WASM) | 767,049 | 832,006 | −7.8% | `amm-pool-contract::do_expensive_work(10_000)` | default `release` (`opt-level=3`) | rustc 1.81 | 2025-Q1 |
 | Storage write (WASM) | 36,840 | 44,512 | −17.2% | `amm-pool-contract::write_bytes(1,024 bytes)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2026-07-26 |
 | Storage read (WASM) | — | — | — | `amm-pool-contract::do_read_heavy_work(100)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
+| Host-function calls (WASM) | 1,280,000 | 1,600,000 | −20.0% | `host-function-contract::repeated_sequence(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q2 |
 
 The native Rust row is included solely to illustrate that native estimates are unreliable for budget decisions. Only WASM-mode estimates should be used for assertions.
 
@@ -190,6 +191,7 @@ To reproduce this measurement:
 4. Deploy the WASM to Soroban testnet and run `cargo run --bin cargo-budget-report -- --network testnet`.
 5. Read `Memory Bytes` from the per-function row in the resulting report (or from `--json` output), and update the `Network mem` column.
 6. Compute delta = `(local − network) / network` and add it to the table.
+The host-function row uses a separate fixture that performs 1,000 calls to `env.ledger().sequence()`. It does not perform storage operations, so the reported values isolate the repeated host-function-call workload. The local estimate was obtained from the WASM-registered contract's `cost_estimate().budget()`, and the network figure was obtained from the corresponding testnet `simulateTransaction` response.
 
 ## Unmeasured operation types
 
@@ -198,6 +200,7 @@ The following operation types have open measurement issues and no published figu
 | Operation type | Issue | Status |
 |---|---|---|
 | Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
+| Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Open |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Open |
 
 
