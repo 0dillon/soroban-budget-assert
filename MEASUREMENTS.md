@@ -1,10 +1,10 @@
 # Measurements
 
-This file records empirical cost measurements comparing local Soroban budget estimates against real network costs. Every measurement PR adds its numbers here so the series stays comparable and in one place.
+This file records empirical cost measurements comparing local Soroban budget estimates against real network costs. Every measurement PR adds its numbers here so the series stays comparable.
 
 ## Methodology
 
-Each measurement compares a local budget estimate against a network-verified figure for the same operation. The local estimate comes from `Env::cost_estimate().budget()` in a test that registers the contract as WASM with `register_contract_wasm` (except where noted). The network figure comes from `simulateTransaction` on Soroban testnet — the same endpoint the network uses to charge non-refundable resource costs.
+Each measurement compares a local budget estimate against a network-verified figure for the same operation. The local estimate comes from `Env::cost_estimate().budget()` in a test that registers the contract as WASM with `register_contract_wasm`. The network figure comes from `simulateTransaction` on Soroban testnet — the same endpoint the network uses to charge non-refundable resource costs.
 
 The WASM is compiled with the profile specified in the **Build profile** column. The direction of the local-vs-network gap is not stable across profiles; the same contract built with Cargo's default release profile can produce a gap pointing in the opposite direction of one built with the size-optimization profile. Every figure includes its build context.
 
@@ -16,7 +16,7 @@ For the storage-write measurement, the complete capture record is checked in at 
 |---|---|
 | **Operation type** | Category of operation being measured |
 | **Local estimate** | Value reported by `Env::cost_estimate().budget()` in a WASM-registered local test |
-| **Network figure** | Value returned by `simulateTransaction` on Soroban testnet (ground truth) |
+| **Network figure** | Value returned by `simulateTransaction` on Soroban testnet |
 | **Delta** | (local − network) / network, expressed as a percentage; positive means local overestimates |
 | **Fixture** | Contract, function, and arguments used for the measurement |
 | **Build profile** | Cargo profile used to compile the WASM |
@@ -195,10 +195,19 @@ To reproduce this measurement:
 5. Read `Memory Bytes` from the per-function row in the resulting report (or from `--json` output), and update the `Network mem` column.
 6. Compute delta = `(local − network) / network` and add it to the table.
 The host-function row uses a separate fixture that performs 1,000 calls to `env.ledger().sequence()`. It does not perform storage operations, so the reported values isolate the repeated host-function-call workload. The local estimate was obtained from the WASM-registered contract's `cost_estimate().budget()`, and the network figure was obtained from the corresponding testnet `simulateTransaction` response.
+| VM-instruction-only (WASM) | 689,312 | 634,912 | +8.6% | `amm-pool-contract::do_vm_instruction_work(10_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.81 | 2025-Q2 |
 
-## Unmeasured operation types
+The native Rust row is included solely to illustrate that native estimates are unreliable for budget decisions. Only WASM-mode estimates should be used for assertions.
 
-The following operation types have open measurement issues and no published figures yet. When adding a measurement, follow the column format above and include the build profile and toolchain.
+The first three rows measure `do_expensive_work(10_000)`, which combines an arithmetic loop with a vector construction and instance-storage write. The fourth row uses `do_vm_instruction_work(10_000)`, an isolated version of the same wrapping arithmetic loop. It performs no storage access, event publication, or cross-contract invocation, so its measured gap represents the VM-instruction-heavy operation rather than an aggregate operation cost.
+
+For the isolated VM benchmark, the delta is calculated as:
+
+```text
+(689,312 − 634,912) / 634,912 = +8.6%
+```
+
+## Operation-type coverage
 
 | Operation type | Issue | Status |
 |---|---|---|
@@ -213,3 +222,7 @@ The following operation types have open measurement issues and no published figu
 <!-- # Soroban Budget Assert: Audit & Roadmap
 
 Based on open source repository standards, this document serves as a guide to bring the `soroban-budget-assert` project up to the required standard for an open source repository -->
+| Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Measured in the existing mixed-operation fixtures |
+| Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
+| VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Measured above |
+| Memory bytes | [#122](https://github.com/Tollcraft/soroban-budget-assert/issues/122) | Open |
