@@ -199,3 +199,10 @@ The following operation types have open measurement issues and no published figu
 |---|---|---|
 | Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Open |
+
+
+
+
+<!-- # Soroban Budget Assert: Audit & Roadmap
+
+Based on open source repository standards, this document serves as a guide to bring the `soroban-budget-assert` project up to the required standard for an open source repository -->
