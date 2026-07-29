@@ -6,6 +6,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
+
+
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -91,6 +93,10 @@ read_limit = 5000
 write_limit = 1000
 "#;
 
+/// Top-level CLI entry point for `cargo budget-report`.
+
+/// Wraps the binary in a `cargo <subcommand>` compatible enum so it can be
+/// invoked as `cargo budget-report [OPTIONS]`.
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
 enum CargoCli {
