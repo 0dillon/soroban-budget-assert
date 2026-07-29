@@ -316,7 +316,19 @@ fn limit_for_metric(func_config: &FunctionConfig, metric: &str) -> Option<u64> {
 ///   the caller should mark the check as failed.
 fn evaluate_check(value: u32, limit: Option<u64>) -> (Option<u64>, Option<bool>) {
     match limit {
-        Some(n) => (Some(n), Some(u64::from(value) <= n)),
+        Some(limit_value) => (
+            Some(limit_value),
+            // Widen `value` from u32 → u64 before comparing.
+            // `u64::from(value)` is preferred over `value as u64` because it
+            // is a lossless, explicitly zero-extending conversion.  If the
+            // type of `value` were ever changed to a signed integer (e.g.
+            // i32), the compiler would reject `u64::from(value)` rather than
+            // silently sign-extending via `as`.
+            // The comparison is inclusive (`<=`): a measurement that exactly
+            // equals the configured limit is still a passing result.
+            Some(u64::from(value) <= limit_value),
+        ),
+        // No limit configured — report the metric but do not enforce it.
         None => (None, None),
     }
 }
@@ -364,18 +376,32 @@ fn emit_check_failure_entries(
 fn format_with_commas_and_units(value: u64, metric: &str) -> String {
     let s = value.to_string();
     let mut result = String::new();
-    let mut count = 0;
-    for c in s.chars().rev() {
-        if count == 3 {
+    // `digit_count` tracks how many decimal digits have been accumulated since
+    // the last comma (or since the start).  When it reaches 3 we are at a
+    // thousands-group boundary and must insert a separator before the next
+    // (more-significant) digit.
+    let mut digit_count = 0;
+    // Iterate least-significant digit first so the comma decision is simply
+    // "have we collected 3 digits yet?" — no look-ahead or total-digit-count
+    // needed.  This is the first of two reversals.
+    for ch in value_str.chars().rev() {
+        if digit_count == 3 {
+            // Modular boundary: insert the comma *before* pushing the next
+            // digit, then reset the counter for the new group.
             result.push(',');
             count = 0;
         }
         result.push(c);
         count += 1;
     }
+    // Second reversal: the accumulated string is in reverse order (least
+    // significant first, commas in mirrored positions).  Re-reversing
+    // restores natural left-to-right reading order.
     let formatted = result.chars().rev().collect::<String>();
 
-    let base = if metric.contains("Bytes") {
+    // Choose the unit suffix based on whether the metric name contains "Bytes".
+    // "CPU Instructions" → "inst.", "Read Bytes" / "Write Bytes" → "B".
+    if metric.contains("Bytes") {
         format!("{} B", formatted)
     } else {
         format!("{} inst.", formatted)
@@ -1279,6 +1305,48 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+mod module_2;
+mod module_3;
+mod module_4;
+pub mod validate;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mode {
+    Report,
+    Record(PathBuf),
+    Check(PathBuf),
+    /// Tier A limit derivation. The path is the destination env file.
+    /// The optional secondary path, when present, is the destination
+    /// for the Markdown provenance sidecar (or `None` to derive the
+    /// default `<OUT>.provenance.md` next to it).
+    Derive(PathBuf, Option<PathBuf>),
+}
+
+impl Mode {
+    fn from_args(args: &BudgetReportArgs) -> Self {
+        if let Some(out) = &args.derive_limits {
+            let provenance = args.provenance_out.as_deref().map(PathBuf::from);
+            return Mode::Derive(PathBuf::from(out), provenance);
+        }
+        if let Some(p) = &args.record_baseline {
+            Mode::Record(PathBuf::from(p))
+        } else if let Some(p) = &args.check_baseline {
+            Mode::Check(PathBuf::from(p))
+        } else {
+            Mode::Report
+        }
+    }
+}
+
+#[cfg(test)]
+mod module_32;
+
+#[cfg(test)]
+mod module_8;
+
+#[cfg(test)]
+mod module_27;
 
 #[cfg(test)]
 mod tests {
