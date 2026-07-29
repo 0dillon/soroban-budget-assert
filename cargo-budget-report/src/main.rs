@@ -1070,54 +1070,13 @@ fn main() -> Result<()> {
                         ("Read Bytes", read_bytes),
                         ("Write Bytes", write_bytes),
                         ("WASM Bytes", wasm_size),
-<<<<<<< HEAD
-                    ] {
-                        let limit = func_config.and_then(|c| limit_for_metric(c, metric));
-=======
                     ];
                     if let Some(mb) = memory_bytes {
                         reporting_metrics.push(("Memory Bytes", mb));
                     }
- chore/measure-gap-vs-input-size
-                });
-
-                use std::io::Write;
-                let mut curl = Command::new("curl")
-                    .args([
-                        "-s",
-                        "-X",
-                        "POST",
-                        "-H",
-                        "Content-Type: application/json",
-                        "--max-time",
-                        "30",
-                        "-d",
-                        "@-",
-                        "https://soroban-testnet.stellar.org:443",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .spawn()
-                    .context("failed to execute curl")?;
-
-                {
-                    let stdin = curl.stdin.as_mut().context("Failed to open stdin")?;
-                    stdin
-                        .write_all(rpc_payload.to_string().as_bytes())
-                        .context("Failed to write to stdin")?;
-                }
-
-                let curl_output = curl
-                    .wait_with_output()
-                    .context("Failed to read curl output")?;
-                let rpc_resp: serde_json::Value = serde_json::from_slice(&curl_output.stdout)
-                    .context("Failed to parse RPC response")?;
-
-main
 
                     for (metric, value) in reporting_metrics {
                         let limit = func_config.and_then(|cfg| limit_for_metric(cfg, metric));
->>>>>>> pr/361
                         let (entry_limit, pass) = evaluate_check(value, limit);
                         if pass == Some(false) {
                             checks_failed = true;
