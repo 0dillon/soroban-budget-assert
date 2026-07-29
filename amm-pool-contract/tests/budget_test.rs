@@ -609,6 +609,152 @@ fn test_budget_cpu_fails_when_exceeded() {
     env.mock_all_auths();
     env.cost_estimate().budget().reset_unlimited();
     client.burn_resources(&500);
+
+    client.do_write_heavy_work(&50);
+
+    let budget = env.cost_estimate().budget();
+    println!("=== WRITE-HEAVY RAW (n=50) ===");
+    println!("CPU instructions:  {}", budget.cpu_instruction_cost());
+    println!(
+        "Memory bytes (proxy for write bytes): {}",
+        budget.memory_bytes_cost()
+    );
+}
+
+/// Asserts that the write-bytes proxy stays below a generous threshold so
+/// normal write-heavy usage passes in CI.
+#[test]
+#[budget_write_bytes_lt(5_000_000)]
+fn test_write_bytes_budget_passes() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+
+    env.cost_estimate().budget().reset_unlimited();
+
+    // n=50 entries × 256 bytes each = ~12 800 bytes of ledger writes.
+    // The memory proxy will be above that but well under 5 000 000.
+    client.do_write_heavy_work(&50);
+}
+
+/// Demonstrates a deliberate write-bytes regression: the limit is set below
+/// the actual cost so the assertion fires and the test panics (as expected).
+#[test]
+#[should_panic(expected = "local estimate, underestimates real network cost")]
+#[budget_write_bytes_lt(1)] // Unrealistically tight limit — always exceeded
+fn test_write_bytes_budget_regression() {
+    let env = Env::default();
+    let contract_id = env.register(ConstantProductPool, ());
+    let client = ConstantProductPoolClient::new(&env, &contract_id);
+
+    env.cost_estimate().budget().reset_unlimited();
+
+    // Even a single entry will exceed a limit of 1 byte.
+    client.do_write_heavy_work(&1);
+}
+
+// ---------------------------------------------------------------------------
+// Event-emission fixtures
+//
+// These tests exercise the `do_event_heavy_work` contract function, which
+// publishes events in a loop with no storage or compute work mixed in.
+// The local CPU and memory cost is printed so developers can calibrate
+// assertion thresholds for event-emission operations.
+// ---------------------------------------------------------------------------
+
+/// Prints the raw CPU/memory cost of an event-only invocation so
+/// developers can calibrate assertion thresholds.
+#[test]
+fn test_budget_emit_event_raw() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    env.cost_estimate().budget().reset_unlimited();
+
+    client.do_event_heavy_work(&5);
+
+    let budget = env.cost_estimate().budget();
+    println!("=== EVENT EMIT LOCAL (n=5) ===");
+    println!("CPU instructions:  {}", budget.cpu_instruction_cost());
+    println!("Memory bytes:      {}", budget.memory_bytes_cost());
+}
+
+/// Asserts that event emission stays below a generous threshold so normal
+/// usage passes in CI.
+#[test]
+#[budget_cpu_lt(5000000)]
+fn test_budget_emit_event_gated() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.do_event_heavy_work(&5);
+}
+
+/// Demonstrates a deliberate event-emission regression: the limit is set
+/// below the actual cost so the assertion fires and the test panics.
+#[test]
+#[should_panic(
+    expected = "local estimate, real network cost may differ significantly in either direction"
+)]
+#[budget_cpu_lt(1)] // Unrealistically tight limit — always exceeded for any real event emission
+fn test_budget_emit_event_deliberate_regression() {
+    let env = Env::default();
+    let (client, _user) = setup_wasm(&env);
+
+    client.do_event_heavy_work(&5);
+}
+
+// ---------------------------------------------------------------------------
+// Test body shapes (issue #6)
+//
+// The assertion is injected on every path that leaves the test, so these body
+// shapes are supported: a trailing expression (`-> Result<_, _>` tests) and an
+// early `return`. budget-macros/tests/ui.rs covers the same shapes at the token
+// level, against a mock `env` and without a WASM build.
+// ---------------------------------------------------------------------------
+
+// A generous limit on purpose: this test pins the *body shape* (the check runs
+// after the `Ok(())` tail and the value is still returned), not a cost figure,
+// so it must not need re-measuring whenever the WASM build changes. The tight
+// limits live in the tests above that exist to measure cost.
+#[test]
+#[budget_cpu_lt(50000000)]
+fn test_budget_macro_result_returning() -> Result<(), std::num::ParseIntError> {
+    let env = Env::default();
+    let (client, user) = setup_wasm(&env);
+
+    let amount: i128 = "10000".parse::<u32>()?.into();
+    client.deposit(&user, &amount, &amount);
+    client.swap(&user, &true, &100_i128, &90_i128);
+
+    Ok(())
+}
+
+// `#[should_panic]` requires a test returning `()`, so the `Result` regression is
+// caught by hand instead.
+#[test]
+fn test_budget_macro_result_returning_regression() {
+    #[budget_cpu_lt(1)]
+    fn measured() -> Result<(), std::num::ParseIntError> {
+        let env = Env::default();
+        let (client, user) = setup_wasm(&env);
+
+        let amount: i128 = "10000".parse::<u32>()?.into();
+        client.deposit(&user, &amount, &amount);
+
+        Ok(())
+    }
+
+    let payload = std::panic::catch_unwind(measured)
+        .expect_err("the budget assertion should have failed at a 1 instruction limit");
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        message.contains("local estimate, real network cost may differ significantly"),
+        "unexpected panic message: {message}"
+    );
 }
 
 #[test]

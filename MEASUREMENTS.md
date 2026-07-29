@@ -232,6 +232,15 @@ The native Rust and WASM local estimates are reported by `Env::cost_estimate().b
 
 **Implication for Tier A margins.** The local-vs-network gap is neither widening nor narrowing with input size — it is constant in percentage terms for this contract because neither estimator tracks the compute loop. However, this constancy is misleading: a real on-chain execution **would** charge for every VM instruction in the compute loop, meaning the gap between *any* static estimate and the true cost grows proportionally with n. Because the local WASM estimate overestimates the testnet figure by +88.6% for all measured sizes, a Tier A margin set above this ceiling (e.g. 2× the local estimate) would pass all tested inputs. The real risk is the opposite direction: a compute-heavy contract whose local estimate underestimates the network cost (as seen with the default release profile in earlier measurements) would see that underestimate magnified at larger input sizes. Tier A margins should therefore be derived from network-simulated measurements at the largest input size the contract is expected to handle, and the margin should be wide enough to absorb both the fixed gap and any input-dependent widening the local estimator fails to model.
 
+### Event emission
+
+| Metric | Local estimate | Network figure | Delta | Fixture | Build profile | Toolchain | Date |
+|---|---|---|---|---|---|---|---|
+| CPU instructions | 2,945,588 | Pending — needs `cargo budget-report` run against testnet | — | `amm-pool-contract::do_event_heavy_work(5)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
+| Memory bytes | 1,728,814 | Pending | — | `amm-pool-contract::do_event_heavy_work(5)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.85 | 2026-07-27 |
+
+The fixture publishes 5 events with a minimal payload (`("ev",)` topic, single `u32` body) in a loop, with no storage or compute work mixed in. To obtain the network figure, run `cargo budget-report` against testnet with a `budget.toml` entry for `do_event_heavy_work` and capture `simulateTransaction` output.
+
 ## Unmeasured operation types
 
 The first three rows measure `do_expensive_work(10_000)`, which combines an arithmetic loop with a vector construction and instance-storage write. The fourth row uses `do_vm_instruction_work(10_000)`, an isolated version of the same wrapping arithmetic loop. It performs no storage access, event publication, or cross-contract invocation, so its measured gap represents the VM-instruction-heavy operation rather than an aggregate operation cost.

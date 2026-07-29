@@ -470,5 +470,17 @@ impl ConstantProductPool {
             sum = sum.wrapping_add(val.len());
         }
         sum
+    /// Publishes `n` events, exercising the event-emission cost path.
+    /// Each event publishes a two-element topic tuple `("ev",)` and a
+    /// single `u32` value as the body — the smallest plausible event
+    /// payload, so the measured cost is dominated by event-emission
+    /// overhead rather than data serialization.
+    ///
+    /// No storage or compute work is mixed in, keeping the measurement
+    /// isolated to event-emission operations.
+    pub fn do_event_heavy_work(env: Env, n: u32) {
+        for i in 0..n {
+            env.events().publish(("ev",), i);
+        }
     }
 }
