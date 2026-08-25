@@ -171,6 +171,62 @@ fn test_memory_budget() {
     env.cost_estimate().budget().reset_unlimited();
     client.do_expensive_work(&10_000);
 }
+### `#[budget_write_bytes_lt(N)]`
+
+Asserts that the ledger write bytes used by `env` are strictly less than `N`.
+
+Write bytes represent the total bytes written to ledger storage during contract execution. This macro measures the local `memory_bytes_cost` as a proxy, which correlates with storage serialization overhead even though the exact on-network write-bytes figure is only available via RPC simulation.
+
+```rust
+use budget_macros::budget_write_bytes_lt;
+
+#[test]
+#[budget_write_bytes_lt(4096)]
+fn test_write_bytes_budget() {
+    let env = Env::default();
+    // ...
+}
+```
+
+### `#[budget_read_bytes_lt(N)]`
+
+Asserts that the ledger read bytes used by `env` are strictly less than `N`.
+
+Read bytes represent the total bytes read from ledger storage during contract execution. This macro measures the local `memory_bytes_cost` as a proxy, which correlates with storage access overhead even though the exact on-network read-bytes figure is only available via RPC simulation.
+
+**Static limit:**
+
+```rust
+use budget_macros::budget_read_bytes_lt;
+
+#[test]
+#[budget_read_bytes_lt(4096)]
+fn test_read_bytes_budget() {
+    let env = Env::default();
+    // ...
+}
+```
+
+**Dynamic limit:**
+
+```rust
+#[test]
+#[budget_read_bytes_lt(env = "MAX_READ_BYTES")]
+fn test_read_bytes_with_env_limit() {
+    let env = Env::default();
+    // ...
+}
+```
+
+**Limit from a `.env` file:**
+
+```rust
+#[test]
+#[budget_read_bytes_lt(env_file = "../tier-a-limits.env", env = "TIER_A__AMM_POOL_CONTRACT__DEPOSIT__READ")]
+fn test_read_bytes_with_env_file() {
+    let env = Env::default();
+    // ...
+}
 ```
 
 ### `#[budget_scaling(…)]` — growth-model assertion

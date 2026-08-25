@@ -12,4 +12,4 @@
 - [Macro Expansion Architecture](macro_architecture.md)
 - [Cross-Contract Testing](cross_contract_testing.md)
 - [Contributing](contributing.md)
-- [Measurements](../../MEASUREMENTS.md)
+- [Measurements](measurements.md)
