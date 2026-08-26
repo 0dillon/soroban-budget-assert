@@ -2,6 +2,7 @@ use crate::cli::{BudgetReportArgs, CargoCli, ColorChoice};
 use crate::derive::{DerivationConfig, Margin};
 use crate::error::{Error, Result, SimulationFailure, SimulationOutcome};
 use anyhow::Context;
+mod arg_spec;
 mod cli;
 mod compare;
 mod fixture;
@@ -24,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use stellar_xdr::curr::{Limits, ReadXdr, SorobanTransactionData};
+use stellar_xdr::{Limits, ReadXdr, SorobanTransactionData};
 use tabled::settings::object::Rows;
 use tabled::settings::Color as TabledColor;
 use tabled::settings::Modify;
@@ -378,7 +379,7 @@ impl TransactionData {
 #[serde(deny_unknown_fields)]
 pub(crate) struct FunctionConfig {
     #[serde(default)]
-    args: Vec<String>,
+    args: Vec<arg_spec::ArgSpec>,
     /// Inclusive upper bound on the measured CPU `Instructions` metric. `None`
     /// means this metric is reported but not enforced by `--check`.
     #[serde(default)]
@@ -701,7 +702,10 @@ fn extract_metrics(rpc_response: &serde_json::Value) -> Result<(u32, u32, u32)> 
 
     Ok((
         tx_data.resources.instructions,
-        tx_data.resources.read_bytes,
+        // Renamed in Protocol 23 XDR: footprint reads that hit disk-backed
+        // ledger entries. In-memory reads of live state are no longer metered
+        // as read bytes. This is the field the report's "Read Bytes" now tracks.
+        tx_data.resources.disk_read_bytes,
         tx_data.resources.write_bytes,
     ))
 }
@@ -1624,7 +1628,11 @@ fn main() -> anyhow::Result<()> {
             }
 
             let func_config = toml_config.functions.get(&function);
-            let func_args = func_config.map(|cfg| cfg.args.clone()).unwrap_or_default();
+            let func_args = match func_config {
+                Some(cfg) => arg_spec::render_args(&cfg.args, &function)
+                    .map_err(|e| Error::Message(format!("{e:#}")))?,
+                None => Vec::new(),
+            };
 
             match simulate_function(
                 &mut transport,
@@ -2022,7 +2030,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use stellar_xdr::curr::WriteXdr;
+    use stellar_xdr::WriteXdr;
 
     const SHARED_BUDGET_TOML: &str = include_str!("../fixtures/shared_budget.toml");
 
@@ -2105,16 +2113,16 @@ mod tests {
     const FIXTURE_RESOURCE_FEE: i64 = 0;
 
     fn make_fixture_tx_data() -> SorobanTransactionData {
-        use stellar_xdr::curr::{ExtensionPoint, LedgerFootprint, VecM};
+        use stellar_xdr::{LedgerFootprint, SorobanTransactionDataExt, VecM};
         SorobanTransactionData {
-            ext: ExtensionPoint::V0,
-            resources: stellar_xdr::curr::SorobanResources {
+            ext: SorobanTransactionDataExt::V0,
+            resources: stellar_xdr::SorobanResources {
                 footprint: LedgerFootprint {
                     read_only: VecM::default(),
                     read_write: VecM::default(),
                 },
                 instructions: FIXTURE_INSTRUCTIONS,
-                read_bytes: FIXTURE_READ_BYTES,
+                disk_read_bytes: FIXTURE_READ_BYTES,
                 write_bytes: FIXTURE_WRITE_BYTES,
             },
             resource_fee: FIXTURE_RESOURCE_FEE,
