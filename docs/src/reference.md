@@ -108,6 +108,33 @@ On failure the test panics with:
 CPU instruction cost {actual} exceeded limit {N} - local estimate, real network cost may differ significantly in either direction
 ```
 
+**Percentage limit** — express the limit as a percentage of a network-wide reference limit:
+
+```rust
+use budget_macros::budget_cpu_lt;
+use soroban_sdk::Env;
+
+#[test]
+#[budget_cpu_lt(pct = 25, of = env_file = "tier-a-limits.env", env = "NETWORK__CPU")]
+fn test_cpu_stays_under_quarter_of_network() {
+    let env = Env::default();
+    // ... test logic ...
+}
+```
+
+The `pct = N` form reads a reference limit from the source specified by `of` (which accepts the same `env_file` + `env`, `env`, or `config` forms as an absolute limit) and computes `reference × N / 100` at test runtime. The resolved absolute limit is what gets compared against the measured cost.
+
+`N` must be between 1 and 100 inclusive. The `of` clause is required — `pct` without `of` is a compile error.
+
+On failure the test panics with a message that shows the percentage, the resolved absolute limit, and the actual value:
+```
+CPU instruction cost {actual} exceeded limit {resolved} (25% of network limit) - local estimate, real network cost may differ significantly in either direction
+```
+
+{% hint style="info" %}
+Percentage limits are particularly useful when network limits may change across protocol versions. Instead of hard-coding an absolute number, you express intent ("use no more than a quarter of the network's CPU allowance") and the resolved value adapts when the reference limit in `tier-a-limits.env` is updated.
+{% endhint %}
+
 ### `#[budget_mem_lt(N)]`
 
 Asserts that the memory bytes cost measured by the test's `env` is strictly less than `N`.
@@ -232,8 +259,10 @@ fn test_read_bytes_with_env_file() {
 ### `#[budget_scaling(…)]` — growth-model assertion
 
 Asserts that the CPU cost *grows* according to a declared model as input size
-increases.  This is a multi-point assertion: the macro measures the annotated
-function at several caller-provided sizes and validates the cost-growth curve.
+increases.  Unlike the fixed-ceiling macros (`budget_cpu_lt`, etc.) which test
+a single point, this is a **multi-point** assertion: the macro measures the
+annotated function at several input sizes and validates that the cost-growth
+curve matches the declared model.
 
 ```rust
 use budget_macros::budget_scaling;
@@ -244,45 +273,196 @@ use soroban_sdk::Env;
     model = linear,
     tolerance = 0.3,
 )]
-fn operation_scales_linearly(env: Env, size: u32) {
-    // body runs once per input size with `env` and `size` in scope
+fn operation_scales_linearly(size: u32) {
+    let env = Env::default();
+    env.cost_estimate().budget().reset_unlimited();
+    // ... do work proportional to `size` ...
 }
 ```
 
+The macro transforms the annotated function into a `#[test]` that iterates over
+each size, creates a fresh `Env`, runs the body, and records the CPU cost. It
+then compares consecutive (size, cost) pairs against the model's predicted
+ratio.
+
 **Attribute fields:**
 
-| Field       | Type              | Description |
-|-------------|-------------------|-------------|
-| `sizes`     | `[u32; N]` (N≥2) | Input sizes to measure. |
-| `model`     | `linear` / `quadratic` | Expected growth model. |
-| `tolerance` | `f64`             | Max allowed relative deviation (e.g. `0.3` = 30%). |
+| Field       | Type              | Required | Description |
+|-------------|-------------------|----------|-------------|
+| `sizes`     | `[u32; N]` (N≥2) | yes | Input sizes to measure, in ascending order. |
+| `model`     | `linear` / `quadratic` | yes | Expected growth model. |
+| `tolerance` | `f64`             | yes | Max allowed relative deviation from expected ratio (e.g. `0.3` = 30%). |
 
-**How it works:**
+All three fields are required. Omitting any of them is a compile error.
 
-1. For each `size` in `sizes` a fresh `Env` is created and its budget reset.
-2. The function body executes (it may read `env` and `size`).
-3. `cpu_instruction_cost()` is recorded.
-4. Consecutive (size, cost) pairs are compared: the observed cost ratio is
-   checked against the ratio the model predicts.
+#### Worked example
 
-**Growth models:**
+Consider a contract function that iterates over a `Vec` and performs a storage
+write on each element.  The storage writes are Soroban host calls — each one
+costs roughly 43,000–46,000 CPU instructions on testnet (see
+[MEASUREMENTS.md](../MEASUREMENTS.md)).  The cost should therefore grow
+linearly with the number of writes.
 
-- **`linear`** — cost ∝ n.  Expected ratio = `size_{i+1} / size_i`.
-- **`quadratic`** — cost ∝ n².  Expected ratio = `(size_{i+1} / size_i)²`.
+```rust
+use budget_macros::budget_scaling;
 
-If the absolute deviation `|observed/expected - 1|` exceeds `tolerance`, the
-test panics with a diagnostic that lists the offending size, expected and
-observed ratios, deviation, and all measurements.
+#[budget_scaling(
+    sizes = [10, 50, 100],
+    model = linear,
+    tolerance = 0.3,
+)]
+fn storage_writes_scale_linearly(size: u32) {
+    let env = soroban_sdk::Env::default();
+    env.cost_estimate().budget().reset_unlimited();
 
-**Limitations:**
+    let contract_id = env.register_contract_wasm(None, WASM);
+    let client = MyContractClient::new(&env, &contract_id);
 
-- The body must not use `return`, `break`, or `continue` that would exit the
-  measurement loop.
-- A fresh `Env` is created per iteration — setup that must persist across sizes
-  should be extracted outside the macro.
-- Small base costs can mask the growth signal at tiny sizes; choose sizes where
-  the measured work dominates.
-- Only CPU cost is checked.
+    env.as_contract(|| {
+        for i in 0..size {
+            // Each iteration performs a host-call storage write.
+            env.storage().persistent().set(&i, &i);
+        }
+    });
+}
+```
+
+The macro generates roughly this test:
+
+```rust
+#[test]
+fn storage_writes_scale_linearly() {
+    const __SIZES: &[u32] = &[10, 50, 100];
+    const __TOLERANCE: f64 = 0.3;
+    let mut __measurements: Vec<(u32, u64)> = Vec::new();
+
+    for &size in __SIZES {
+        let env = soroban_sdk::Env::default();
+        env.cost_estimate().budget().reset_unlimited();
+        // --- original body runs here, `size` is the loop variable ---
+        let cost = env.cost_estimate().budget().cpu_instruction_cost();
+        __measurements.push((size, cost));
+    }
+
+    // Compare consecutive pairs:
+    // (10→50): expected ratio = 5.0, observed = cost_50 / cost_10
+    // (50→100): expected ratio = 2.0, observed = cost_100 / cost_50
+    for i in 1..__measurements.len() {
+        let (prev_s, prev_c) = __measurements[i - 1];
+        let (curr_s, curr_c) = __measurements[i];
+        let expected = curr_s as f64 / prev_s as f64; // linear model
+        let observed = curr_c as f64 / prev_c as f64;
+        let deviation = (observed / expected - 1.0).abs();
+        assert!(deviation <= __TOLERANCE, "...");
+    }
+}
+```
+
+#### Growth models
+
+| Model | Prediction | Expected ratio between consecutive sizes |
+|-------|-----------|------------------------------------------|
+| `linear` | cost ∝ n | `size_{i+1} / size_i` |
+| `quadratic` | cost ∝ n² | `(size_{i+1} / size_i)²` |
+
+For `sizes = [10, 100, 1000]` with `model = linear`:
+
+- 10→100: expected ratio = 10.0 (cost should ~10× when input 10×)
+- 100→1000: expected ratio = 10.0
+
+With `model = quadratic`:
+
+- 10→100: expected ratio = 100.0 (cost should ~100× when input 10×)
+- 100→1000: expected ratio = 100.0
+
+#### Failure output
+
+When the observed ratio deviates beyond the tolerance, the test panics with a
+diagnostic that includes everything needed to diagnose the problem:
+
+```
+Scaling check failed at size 100:
+    Expected ratio: ~10.00 (model = linear)
+    Observed ratio: ~2.50
+    Deviation: 0.75 > tolerance 0.30
+    Measured sizes:  [10, 100, 1000]
+    Measured costs:  [143887, 359717, 899293]
+    Expected growth: linear (cost ∝ n)
+```
+
+This tells you: at size 100, the cost was 2.5× the cost at size 10, but the
+model predicted 10× — the function is sub-linear.
+
+#### When to use `budget_scaling` vs a fixed ceiling
+
+A fixed-ceiling macro (`budget_cpu_lt(N)`) answers: *"Is this function's cost
+below N?"* — a single-point regression gate.  Use it when:
+
+- The function's cost does not meaningfully vary with input size (constant
+  host-call count, fixed iteration).
+- You have a known budget ceiling from a network limit or a Tier A derivation.
+- You want a simple pass/fail gate in CI.
+
+A scaling assertion answers: *"Does this function's cost grow at the rate I
+expect?"* — a shape check.  Use it when:
+
+- The function takes a variable-size input (a `Vec`, a loop bound, a page
+  count) and you want to catch accidental cost blowups at larger sizes.
+- A fixed ceiling would mask a regression: a function at size 10 might cost
+  100k (well under a 1M ceiling), but at size 1000 it might cost 50M — the
+  ceiling passes at both sizes if you only test the small input, but a scaling
+  assertion catches the non-linear blowup.
+- You want to enforce a complexity class: *"this must be O(n), not O(n²)"*.
+
+The two are complementary.  A scaling assertion guards the **shape** of the cost
+curve; a fixed ceiling guards the **magnitude** at a specific operating point.
+A mature test suite often has both: a scaling test to prevent algorithmic
+regressions, and a ceiling test at the expected production input size to catch
+absolute regressions.
+
+#### Relationship to MEASUREMENTS.md §"Gap vs input size"
+
+The [MEASUREMENTS.md](../MEASUREMENTS.md) section "Gap vs input size" measures
+how the local-vs-network cost gap behaves as `n` grows.  The key finding: for
+the AMM pool contract's `do_expensive_work` function, both the WASM local
+estimate (2,661,315) and testnet simulated cost (1,410,984) are **constant**
+across all measured input sizes (1,000 through 100,000), producing a stable
++88.6% delta.
+
+This invariance exists because Soroban's budget meters **host function calls**
+(storage writes, Vec allocations), not raw WASM arithmetic.  The compute loop
+(`n` iterations of `wrapping_add(wrapping_mul)`) is invisible to both local and
+network metering.  The storage loop is internally capped at `n.min(100)`, so it
+saturates at n=100 and is flat thereafter.
+
+The practical consequence for `budget_scaling`: if your function's cost is
+dominated by host calls that scale with input (e.g., per-element storage
+writes), a `linear` scaling assertion will pass.  If the cost is dominated by
+raw WASM arithmetic that Soroban does not meter, the cost will appear constant
+and a `linear` scaling assertion will **fail** — the macro is telling you the
+truth about what the metering infrastructure measures, which may differ from
+what you expect based on algorithmic complexity.
+
+When a scaling assertion fails, check whether the failing cost is dominated by
+metered host calls or un-metered compute.  If it is un-metered compute, the
+correct response is usually to adjust the model to `linear` with a flat expected
+ratio (the cost is constant from the meter's perspective), or to accept that
+the scaling assertion is not meaningful for that function and use a fixed
+ceiling instead.
+
+#### Limitations
+
+- The function body must not use `return`, `break`, or `continue` that would
+  exit the measurement loop prematurely.
+- Each iteration creates a fresh `Env` — setup that must persist across sizes
+  (e.g., contract deployment) should be placed inside the body so it runs per
+  iteration.
+- Small base costs (Env creation, budget reset) can dominate and mask the
+  growth signal at very small sizes.  Use sizes large enough that the measured
+  work dominates the overhead.
+- Only CPU instruction cost is checked.  Memory scaling is not yet supported.
+- The `#[test]` attribute is added automatically if not present.  User
+  attributes (like `#[should_panic]`) are preserved.
 
 ### Requirements and caveats
 
