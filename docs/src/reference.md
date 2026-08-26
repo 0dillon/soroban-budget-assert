@@ -108,6 +108,33 @@ On failure the test panics with:
 CPU instruction cost {actual} exceeded limit {N} - local estimate, real network cost may differ significantly in either direction
 ```
 
+**Percentage limit** — express the limit as a percentage of a network-wide reference limit:
+
+```rust
+use budget_macros::budget_cpu_lt;
+use soroban_sdk::Env;
+
+#[test]
+#[budget_cpu_lt(pct = 25, of = env_file = "tier-a-limits.env", env = "NETWORK__CPU")]
+fn test_cpu_stays_under_quarter_of_network() {
+    let env = Env::default();
+    // ... test logic ...
+}
+```
+
+The `pct = N` form reads a reference limit from the source specified by `of` (which accepts the same `env_file` + `env`, `env`, or `config` forms as an absolute limit) and computes `reference × N / 100` at test runtime. The resolved absolute limit is what gets compared against the measured cost.
+
+`N` must be between 1 and 100 inclusive. The `of` clause is required — `pct` without `of` is a compile error.
+
+On failure the test panics with a message that shows the percentage, the resolved absolute limit, and the actual value:
+```
+CPU instruction cost {actual} exceeded limit {resolved} (25% of network limit) - local estimate, real network cost may differ significantly in either direction
+```
+
+{% hint style="info" %}
+Percentage limits are particularly useful when network limits may change across protocol versions. Instead of hard-coding an absolute number, you express intent ("use no more than a quarter of the network's CPU allowance") and the resolved value adapts when the reference limit in `tier-a-limits.env` is updated.
+{% endhint %}
+
 ### `#[budget_mem_lt(N)]`
 
 Asserts that the memory bytes cost measured by the test's `env` is strictly less than `N`.
