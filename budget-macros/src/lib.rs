@@ -79,8 +79,11 @@ impl Parse for StandaloneSpec {
 
         if !input.is_empty() {
             return Err(syn::Error::new(
-                Span::call_site(),
-                "unexpected trailing tokens after `baseline = …`",
+                input.span(),
+                format!(
+                    "unexpected token(s) after `baseline = …` — expected end of attribute, got `{}`",
+                    input
+                ),
             ));
         }
 
@@ -136,6 +139,11 @@ impl Parse for BudgetLimit {
         let mut config_key: Option<String> = None;
         let mut pct_value: Option<u64> = None;
         let mut pct_of: Option<Box<BudgetLimit>> = None;
+        let mut pct_span: Option<Span> = None;
+        // Spans of the key tokens, for precise error pointers.
+        let mut env_span: Option<Span> = None;
+        let mut env_file_span: Option<Span> = None;
+        let mut config_span: Option<Span> = None;
         // First identifier seen that is not a limit-source key. Only used to
         // improve the error when nothing valid was parsed at all.
         let mut unknown_key: Option<Ident> = None;
@@ -201,6 +209,7 @@ impl Parse for BudgetLimit {
             input.parse::<Token![=]>()?;
             let ident_str = ident.to_string();
             if ident_str == "env_file" {
+                env_file_span = Some(ident.span());
                 // Accept either a string literal or an identifier/const path
                 // for env_file, so callers can write `env_file = "path"` or
                 // `env_file = CONST_NAME`.
@@ -215,6 +224,7 @@ impl Parse for BudgetLimit {
             } else if ident_str == "pct" {
                 // Parse: `pct = <number>` followed by optional `, of = <source>`.
                 // The `of` source is parsed as a nested BudgetLimit.
+                pct_span = Some(ident.span());
                 if pct_value.is_some() {
                     return Err(syn::Error::new(
                         ident.span(),
@@ -259,7 +269,11 @@ impl Parse for BudgetLimit {
                         if matches!(key_name.as_str(), "env" | "config") {
                             return Err(syn::Error::new(
                                 ahead_key.span(),
-                                "`pct` cannot be combined with `env` or `config`",
+                                format!(
+                                    "`pct` cannot be combined with `{}` \
+                             — use `pct = N, of = env_file = \"...\", env = \"...\"` instead",
+                                    key_name
+                                ),
                             ));
                         }
                     }
@@ -272,8 +286,14 @@ impl Parse for BudgetLimit {
             } else {
                 let lit: LitStr = input.parse()?;
                 match ident_str.as_str() {
-                    "env" => env_var = Some(lit.value()),
-                    "config" => config_key = Some(lit.value()),
+                    "env" => {
+                        env_span = Some(ident.span());
+                        env_var = Some(lit.value())
+                    }
+                    "config" => {
+                        config_span = Some(ident.span());
+                        config_key = Some(lit.value())
+                    }
                     other => {
                         return Err(syn::Error::new(
                             ident.span(),
@@ -293,18 +313,13 @@ impl Parse for BudgetLimit {
             // to take the percentage of.
             let of = pct_of.ok_or_else(|| {
                 syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    "`pct` requires `of = <source>` — e.g. `pct = 25, of = env_file = \"tier-a-limits.env\", env = \"NETWORK__CPU\"`",
+                    pct_span.unwrap_or_else(Span::call_site),
+                    format!(
+                        "`pct` requires `of = <source>` — e.g. \
+                         `pct = {pct}, of = env_file = \"tier-a-limits.env\", env = \"NETWORK__CPU\"`"
+                    ),
                 )
             })?;
-            // `pct` is mutually exclusive with env / config — these provide
-            // an absolute value, not a reference for the percentage.
-            if env_var.is_some() || config_key.is_some() {
-                return Err(syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    "`pct` cannot be combined with `env` or `config`",
-                ));
-            }
             return Ok(BudgetLimit::Percentage { pct, of });
         }
         match (env_file, env_var, config_key) {
@@ -314,13 +329,19 @@ impl Parse for BudgetLimit {
             }),
             (None, Some(var), None) => Ok(BudgetLimit::EnvVar(var)),
             (None, None, Some(key)) => Ok(BudgetLimit::Config(key)),
-            (Some(_), None, _) | (Some(_), _, Some(_)) => Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "`env_file` must be paired with `env = \"VAR_NAME\"` and not with `config`",
+            (Some(_), None, None) => Err(syn::Error::new(
+                env_file_span.unwrap_or_else(Span::call_site),
+                "`env_file` must be paired with `env = \"VAR_NAME\"`",
+            )),
+            (Some(_), _, Some(_)) => Err(syn::Error::new(
+                env_file_span.unwrap_or_else(Span::call_site),
+                "`env_file` cannot be paired with `config` — use `env_file = \"PATH\", env = \"VAR_NAME\"` instead",
             )),
             (None, Some(_), Some(_)) => Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "`env` and `config` cannot be combined; pick one",
+                config_span
+                    .or(env_span)
+                    .unwrap_or_else(Span::call_site),
+                "`env` and `config` cannot be combined — pick one",
             )),
             (None, None, None) => Err(match unknown_key {
                 Some(key) => syn::Error::new(
