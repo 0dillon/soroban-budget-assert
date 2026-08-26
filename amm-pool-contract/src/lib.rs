@@ -10,6 +10,12 @@ const BAL_A: Symbol = symbol_short!("balA");
 const BAL_B: Symbol = symbol_short!("balB");
 const LP_BAL: Symbol = symbol_short!("lpBl");
 
+/// Upper bound on `n` for the `bytes_*_bench` fixtures below. Backs a
+/// fixed-size stack array so the buffer can be built with a single bulk
+/// `Bytes::from_slice` call in this `#![no_std]` crate (no heap allocator
+/// available for a runtime-sized `Vec<u8>`).
+const BYTES_BENCH_MAX: usize = 65_536;
+
 #[contract]
 pub struct HelperContract;
 
@@ -384,6 +390,52 @@ impl ConstantProductPool {
         }
         sum
     }
+    /// Builds an `n`-byte buffer by appending one byte at a time via
+    /// `push_back`, isolating the append-in-a-loop cost pattern the
+    /// memory-category lints warn about as potentially quadratic. No
+    /// storage or authorization side-effects, so the measured cost is
+    /// dominated by the repeated append itself.
+    pub fn bytes_append_bench(env: Env, n: u32) -> u32 {
+        let mut b = Bytes::new(&env);
+        for i in 0..n {
+            b.push_back((i % 256) as u8);
+        }
+        let len = b.len();
+        drop(b);
+        len
+    }
+
+    /// Builds an `n`-byte buffer with a single bulk `Bytes::from_slice`
+    /// call (not a `push_back` loop, so the append-in-a-loop cost above
+    /// doesn't leak into this measurement), then slices out its first
+    /// half with `Bytes::slice`.
+    pub fn bytes_slice_bench(env: Env, n: u32) -> u32 {
+        let data = [0u8; BYTES_BENCH_MAX];
+        let n = n as usize;
+        let b = Bytes::from_slice(&env, &data[..n]);
+        let sliced = b.slice(0..(n / 2) as u32);
+        let len = sliced.len();
+        drop(sliced);
+        drop(b);
+        len
+    }
+
+    /// Builds two `n`-byte buffers with bulk `Bytes::from_slice` calls,
+    /// then joins them with `Bytes::append`, isolating the cost of a
+    /// single bulk concatenation from both the append-loop and slice
+    /// measurements above.
+    pub fn bytes_concat_bench(env: Env, n: u32) -> u32 {
+        let data = [0u8; BYTES_BENCH_MAX];
+        let n = n as usize;
+        let mut a = Bytes::from_slice(&env, &data[..n]);
+        let b = Bytes::from_slice(&env, &data[..n]);
+        a.append(&b);
+        let len = a.len();
+        drop(a);
+        drop(b);
+        len
+    }
+
     /// Publishes `n` events, exercising the event-emission cost path.
     /// Each event publishes a two-element topic tuple `("ev",)` and a
     /// single `u32` value as the body — the smallest plausible event
