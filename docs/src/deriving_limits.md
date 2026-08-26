@@ -13,6 +13,18 @@ sub-command regenerates that file from a network-verified `cargo
 budget-report --json` output, with the margin recorded as data instead of
 buried in human reasoning.
 
+{% hint style="info" %}
+**Baselines and marginal cost.** Tier A macro assertions use the
+`baseline = <expr>` parameter to subtract WASM instantiation overhead from
+the raw local measurement before comparing against the limit. The Tier B
+network limits derived by `--derive-limits` do *not* include this floor, so
+the two are already aligned: the derived limit is compared against the
+marginal cost, not the raw measurement. See
+[Marginal-cost baseline subtraction](reference.md#marginal-cost-baseline-subtraction)
+in the Tool Reference for the full explanation of what the baseline is, how
+it is measured, and what the resulting number represents.
+{% endhint %}
+
 ### One-time setup
 
 Add a `[margin]` block to `budget.toml` so the derivation tool can read the

@@ -476,6 +476,167 @@ ceiling instead.
 - The macro checks the *local* estimate, which can sit above or below the real network cost depending on the build profile. Set `N` a few percent above the measured local number to catch regressions, and use `cargo budget-report` for the network ground truth (see the End-User Guide).
 {% endhint %}
 
+### Marginal-cost baseline subtraction
+
+Every budget macro accepts an optional `baseline = <expr>` parameter (or
+`cpu_baseline` / `mem_baseline` on `budget_lt`). When present, the macro
+subtracts the baseline from the raw measurement before comparing against the
+limit. The number being asserted is the **marginal cost** — the cost of the
+function under test *minus* the cost of the test infrastructure that would
+exist even if the function did nothing.
+
+#### Why this exists
+
+When a Soroban test invokes a contract function through the local test VM, the
+VM pays a fixed cost before your contract logic runs: it parses the WASM
+module, instantiates it, sets up the host environment, and tears it all down
+afterward. This **instantiation floor** is deterministic for a given module but
+large — on the AMM pool contract it measures ~3.1M CPU instructions — and it
+exists on every call regardless of which function you invoke.
+
+The Tier B network limits (what `cargo budget-report` measures via
+`simulateTransaction`) do not include this floor. The network charges for the
+transaction itself, not for the local VM's setup overhead. A raw local
+measurement that includes the floor therefore cannot be compared against a
+network-derived limit — the floor inflates the number by millions of
+instructions and masks the actual cost of the function.
+
+The baseline subtraction removes that floor. What remains is the cost your
+function adds *on top of* the infrastructure, which is the quantity the Tier A
+limits describe.
+
+#### How it works
+
+The macro generates code equivalent to:
+
+```rust
+let raw_cost = env.cost_estimate().budget().cpu_instruction_cost();
+let baseline_cost = baseline_expr; // evaluated once, after raw_cost
+let marginal = raw_cost.saturating_sub(baseline_cost);
+assert!(marginal < limit, "...");
+```
+
+Two details matter:
+
+1. **Saturating subtraction.** If the raw measurement is below the baseline
+   (noise around a near-zero marginal cost), the result is clamped to 0 rather
+   than wrapping to `u64::MAX`. This reports honestly as "no measurable marginal
+   cost" instead of a spurious failure.
+
+2. **Measurement order.** The raw measurement is captured *before* the baseline
+   expression is evaluated, so a baseline helper that spins up its own `Env`
+   cannot perturb the number being asserted on.
+
+#### What the marginal number represents
+
+The marginal cost is the CPU instructions (or memory bytes) that your function
+consumes **beyond** the fixed WASM instantiation overhead. It is the quantity
+that changes when your function's logic changes — adding a storage write, an
+extra loop iteration, or an authorization check will move the marginal number,
+while the floor stays constant.
+
+#### What it does not represent
+
+The marginal cost is **not** the cost the network will charge. The network
+charges the full transaction cost, which includes its own VM execution overhead,
+host function call costs, and protocol-level metering that differs from the
+local estimate. The marginal cost is a *local* number that isolates your
+function's contribution from the test harness's fixed overhead — it is a
+regression gate, not a network budget.
+
+The relationship between marginal cost and network cost depends on the
+local-vs-network gap (see [MEASUREMENTS.md](../MEASUREMENTS.md)), which varies
+by build profile, SDK version, and protocol version.
+
+#### Worked example
+
+Suppose you have a contract with a `deposit` function and a deliberately-empty
+`noop` function. You measure both locally:
+
+| Quantity | Value |
+|----------|-------|
+| `deposit` raw CPU cost | 5,842,136 |
+| `noop` CPU cost (baseline) | 3,143,886 |
+| **Marginal cost** | **2,698,250** |
+
+Without the baseline, you would need a Tier A limit above 5.8M to avoid
+false failures — but the Tier B network measurement for `deposit` might be
+2.1M, and a limit of 5.8M would never catch a regression that doubles the
+function's cost to 4.2M (still under 5.8M).
+
+With the baseline, the Tier A limit is set against the 2.7M marginal cost.
+A regression that doubles the function's cost would push the marginal to ~5.3M,
+which would fail the assertion and be caught in CI.
+
+```rust
+#[test]
+#[budget_cpu_lt(
+    env_file = "tier-a-limits.env",
+    env = "TIER_A__CONTRACT__DEPOSIT__CPU",
+    baseline = baseline_cpu(),
+)]
+fn test_deposit_budget() {
+    let env = Env::default();
+    let client = setup(&env);
+    env.cost_estimate().budget().reset_unlimited();
+    client.deposit(&user, &token_a, &amount);
+}
+```
+
+The `baseline_cpu()` function calls `noop` through the same WASM pipeline and
+returns its CPU cost. The assertion checks:
+
+```
+CPU instruction cost 2698250 exceeded limit 2100000
+(marginal: 2698250 measured - 3143886 baseline)
+```
+
+#### Choosing a limit under the marginal-cost model
+
+1. **Start from Tier B.** Run `cargo budget-report --json` to get the
+   network-simulated cost for the function. This is the ground truth for what
+   the network charges.
+
+2. **Derive the Tier A limit.** Use `cargo budget-report --derive-limits` with
+   a margin in `budget.toml` to apply a safety buffer. The margin accounts for
+   the local-vs-network gap and version drift. See [Deriving Limits](deriving_limits.md)
+   for the full workflow.
+
+3. **The limit you get is already marginal.** The Tier B number from
+   `simulateTransaction` measures the full transaction cost, which does not
+   include the local WASM floor. The margin is applied to *that* number. When
+   your macro assertion subtracts the baseline, the marginal cost it checks
+   against is already in the same units as the Tier B figure.
+
+4. **Do not add the floor back.** If you have already derived a Tier A limit
+   from a Tier B report (which excludes the floor), and you are using
+   `baseline = baseline_cpu()` (which subtracts the floor), the numbers are
+   already aligned. Adding the floor to the limit would double-count it.
+
+#### Syntax
+
+Single-metric macros (`budget_cpu_lt`, `budget_mem_lt`,
+`budget_write_bytes_lt`, `budget_read_bytes_lt`):
+
+```rust
+#[budget_cpu_lt(N, baseline = baseline_expr)]
+#[budget_mem_lt(N, baseline = baseline_expr)]
+```
+
+The two-metric `budget_lt` macro uses separate keys:
+
+```rust
+#[budget_lt(
+    cpu = N,
+    mem = M,
+    cpu_baseline = baseline_cpu_expr,
+    mem_baseline = baseline_mem_expr,
+)]
+```
+
+The baseline expression is any Rust expression that evaluates to `u64` at test
+runtime — a function call, a constant, or an inline block.
+
 ## Soroban Budget API
 
 The macros and manual tests interact with the Soroban budget API through `env.cost_estimate().budget()`. The key methods are:
