@@ -131,7 +131,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.91.0
           targets: wasm32v1-none wasm32-unknown-unknown
 
       - name: Install System Dependencies
@@ -457,7 +457,7 @@ The workflow builds WASM *before* running tests. If `cargo build -p my-contract 
 
 ### Toolchain mismatch between local and CI numbers
 
-The workflow pins the Rust toolchain explicitly (`toolchain: 1.93.0` via `dtolnay/rust-toolchain` in the snippets above). If that pin disagrees with the `channel` in your `rust-toolchain.toml` — the thing your local measurements were taken under — the compiler versions differ and the WASM differs with them. Mismatches rarely announce themselves as such: they show up as budget numbers that creep for no reviewable reason, or as `cargo test` failing with cryptic "feature stable since 1.XX" errors. Pick one version, pin it in both places, and bump them together.
+The workflow pins the Rust toolchain explicitly (`toolchain: 1.91.0` via `dtolnay/rust-toolchain` in the snippets above). If that pin disagrees with the `channel` in your `rust-toolchain.toml` — the thing your local measurements were taken under — the compiler versions differ and the WASM differs with them. Mismatches rarely announce themselves as such: they show up as budget numbers that creep for no reviewable reason, or as `cargo test` failing with cryptic "feature stable since 1.XX" errors. Pick one version, pin it in both places, and bump them together.
 
 ## See also
 
