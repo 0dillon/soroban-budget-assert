@@ -286,7 +286,7 @@ cargo budget-report
 - [Stellar System Status](https://status.stellar.org/) — check for ongoing Friendbot or RPC outages
 - [Stellar CLI reference](https://github.com/stellar/stellar-cli) — all `stellar keys` subcommands
 - [Stellar network information](https://developers.stellar.org/docs/network/) — testnet vs Futurenet vs pubnet differences
-- The [CI Tutorial](ci_tutorial.md) has a [Troubleshooting](ci_tutorial.md#troubleshooting) section with CI-specific failure modes
+- The [CI/CD Integration](ci_cd_integration.md) guide has a [Troubleshooting](ci_cd_integration.md#troubleshooting) section with CI-specific failure modes
 - The [End-User Guide](user_guide.md) covers `budget.toml` configuration and first-time setup
 
 ## ⚙️ Supported Versions & Compatibility
