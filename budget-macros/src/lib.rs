@@ -486,12 +486,17 @@ fn generate_limit_expr(limit: &BudgetLimit, metric_label: &str) -> proc_macro2::
                             )
                         })
                     }).unwrap_or_else(|| {
+                        // Missing key in env_file — panic with an actionable
+                        // message that names both the file and the key so a
+                        // contributor who broke the wiring can see both at
+                        // once.
                         panic!(
-                            "{}: env_file {} missing key {} (or file cannot be read)",
+                            "{}: env_file '{}' is missing key '{}' — \
+                             add it to the file or use a fallback limit",
                             #metric_label,
                             env_file_path,
                             env_file_key,
-                        )
+                        );
                     })
                 }
             }
@@ -813,6 +818,13 @@ fn generate_prelude() -> proc_macro2::TokenStream {
                 let (lhs, rhs) = trimmed.split_once('=')?;
                 if lhs.trim() == key {
                     let raw = rhs.trim();
+                    // Strip inline comments ("  # provenance") that
+                    // cargo budget-report --derive-limits appends to
+                    // each KEY=VALUE line.
+                    let raw = match raw.find(" #") {
+                        Some(pos) => raw[..pos].trim(),
+                        None => raw,
+                    };
                     let unquoted = raw
                         .strip_prefix('"')
                         .and_then(|s| s.strip_suffix('"'))
