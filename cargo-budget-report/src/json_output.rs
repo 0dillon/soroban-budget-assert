@@ -14,8 +14,17 @@ pub(crate) const SCHEMA_VERSION: u32 = 1;
 /// snapshot objects are unchanged from the pre-versioning format.
 #[derive(Serialize)]
 pub(crate) struct BudgetReportJson<'a> {
-    pub(crate) schema_version: u32,
-    pub(crate) snapshots: &'a [crate::CostReport],
+    schema_version: u32,
+    snapshots: &'a [crate::CostReport],
+}
+
+/// Wrap the given report rows in the versioned JSON envelope.
+pub(crate) fn render_json(reports: &[crate::CostReport]) -> String {
+    let wrapper = BudgetReportJson {
+        schema_version: SCHEMA_VERSION,
+        snapshots: reports,
+    };
+    serde_json::to_string_pretty(&wrapper).expect("report serialization should not fail")
 }
 
 #[cfg(test)]
@@ -34,12 +43,8 @@ mod tests {
             pass: None,
         }];
 
-        let wrapper = BudgetReportJson {
-            schema_version: SCHEMA_VERSION,
-            snapshots: &reports,
-        };
-
-        let json = serde_json::to_value(&wrapper).unwrap();
+        let json_str = render_json(&reports);
+        let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(json["schema_version"], SCHEMA_VERSION);
         assert!(json["snapshots"].is_array());
         assert_eq!(json["snapshots"][0]["package"], "test-pkg");
