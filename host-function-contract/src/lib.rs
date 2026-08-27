@@ -9,12 +9,16 @@
 //! contract storage state, event logging, or CPU-intensive math loops. This isolates the
 //! host-function overhead from other billing dimensions (such as read/write bytes or VM instructions).
 //!
+//! It also hosts the Map-operation fixtures (`map_insert`, `map_get`, `map_remove`,
+//! `map_iterate`), which isolate Soroban [`Map`] host calls without storage, event, or
+//! arithmetic side-effects, for the local-vs-network Map cost-gap measurement.
+//!
 //! See `README.md` and `MEASUREMENTS.md` at the repository root for detailed methodology
 //! and captured figures.
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, Bytes, Env, Map};
 
 /// Benchmark contract fixture for measuring the gap between local budget estimates
 /// and live network simulation figures for repeated host-function calls.
@@ -88,5 +92,80 @@ impl HostFunctionBenchmark {
         }
 
         iterations
+    }
+
+    /// Inserts `size` key/value pairs into a fresh `Map<u32, u32>` and returns
+    /// the number of inserts performed.
+    ///
+    /// Every operation is a Map insert host call; no storage, event, or
+    /// arithmetic side-effects. The return value prevents dead-code
+    /// elimination. `size` is the map size / insert count.
+    pub fn map_insert(env: Env, size: u32) -> u32 {
+        let mut m: Map<u32, u32> = Map::new(&env);
+
+        for i in 0..size {
+            m.set(i, i);
+        }
+
+        size
+    }
+
+    /// Builds a `size`-entry `Map<u32, u32>` and then issues `size` `get`
+    /// calls against the existing keys, returning the number of gets.
+    ///
+    /// The build (insert) cost is identical to that of [`Self::map_insert`] at
+    /// the same `size`, so the marginal cost of the get loop is obtained by
+    /// subtracting `map_insert(size)`. This isolates the cost of Map lookups.
+    pub fn map_get(env: Env, size: u32) -> u32 {
+        let mut m: Map<u32, u32> = Map::new(&env);
+        for i in 0..size {
+            m.set(i, i);
+        }
+
+        for i in 0..size {
+            let _v = m.get(i);
+        }
+
+        size
+    }
+
+    /// Builds a `size`-entry `Map<u32, u32>` and then issues `size` `remove`
+    /// calls, deleting every key, returning the number of removes.
+    ///
+    /// The build (insert) cost is identical to that of [`Self::map_insert`] at
+    /// the same `size`, so the marginal cost of the remove loop is obtained by
+    /// subtracting `map_insert(size)`. This isolates the cost of Map removals.
+    pub fn map_remove(env: Env, size: u32) -> u32 {
+        let mut m: Map<u32, u32> = Map::new(&env);
+        for i in 0..size {
+            m.set(i, i);
+        }
+
+        for i in 0..size {
+            let _ = m.remove(i);
+        }
+
+        size
+    }
+
+    /// Builds a `size`-entry `Map<u32, u32>` and then iterates over every
+    /// entry, summing the values and returning the sum.
+    ///
+    /// The build (insert) cost is identical to that of [`Self::map_insert`] at
+    /// the same `size`, so the marginal cost of the iteration is obtained by
+    /// subtracting `map_insert(size)`. This isolates the cost of Map
+    /// iteration.
+    pub fn map_iterate(env: Env, size: u32) -> u32 {
+        let mut m: Map<u32, u32> = Map::new(&env);
+        for i in 0..size {
+            m.set(i, i);
+        }
+
+        let mut sum: u32 = 0;
+        for (_k, v) in m.iter() {
+            sum = sum.wrapping_add(v);
+        }
+
+        sum
     }
 }
