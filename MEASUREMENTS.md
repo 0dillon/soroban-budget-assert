@@ -281,6 +281,66 @@ The native Rust and WASM local estimates are reported by `Env::cost_estimate().b
 
 **Implication for Tier A margins.** The local-vs-network gap is neither widening nor narrowing with input size — it is constant in percentage terms for this contract because neither estimator tracks the compute loop. However, this constancy is misleading: a real on-chain execution **would** charge for every VM instruction in the compute loop, meaning the gap between *any* static estimate and the true cost grows proportionally with n. Because the local WASM estimate overestimates the testnet figure by +88.6% for all measured sizes, a Tier A margin set above this ceiling (e.g. 2× the local estimate) would pass all tested inputs. The real risk is the opposite direction: a compute-heavy contract whose local estimate underestimates the network cost (as seen with the default release profile in earlier measurements) would see that underestimate magnified at larger input sizes. Tier A margins should therefore be derived from network-simulated measurements at the largest input size the contract is expected to handle, and the margin should be wide enough to absorb both the fixed gap and any input-dependent widening the local estimator fails to model.
 
+## Host-function calls
+
+This section records the local-vs-network cost gap for repeated host-function invocations, isolated from storage, event, and compute side-effects. It uses the dedicated [`host-function-contract`](host-function-contract/README.md) fixture crate.
+
+Host functions are where the local Soroban environment and the real host differ most structurally: locally a host function is a Rust call into the test harness in-process, while on the network it is a call into the actual host implementation with its own metering. The measurement in this section tests whether the CPU-instruction gap measured for other operation types (mixed compute + storage, VM instructions) applies to host-function calls, and — because the gap may vary by function — whether it is uniform across several distinct host functions.
+
+### Methodology
+
+The local estimate is collected by the `measure_host_fn_gap` test in `host-function-contract/tests/measure_host_fn_gap.rs`, which registers the WASM via `Env::register`, resets the budget to unlimited, and reads `cost_estimate().budget().cpu_instruction_cost()`.
+
+```
+cargo build -p host-function-contract --target wasm32v1-none --release
+cargo test -p host-function-contract --test measure_host_fn_gap -- --nocapture
+```
+
+The network figure is collected per function/call-count by deploying the same WASM to Soroban testnet and decoding the `resources.instructions` field from the `simulateTransaction` `transactionData` in the response. The deployed snapshot is not recoverable deterministically, so the capture record (all figures, per-function and per-call-count) is checked in at [`cargo-budget-report/fixtures/host_function_benchmark.json`](cargo-budget-report/fixtures/host_function_benchmark.json).
+
+Four distinct host functions are measured, all in [`host-function-contract/src/lib.rs`](host-function-contract/src/lib.rs): `repeated_sequence` (`env.ledger().sequence()`), `repeated_timestamp` (`env.ledger().timestamp()`), `repeated_hash` (`env.crypto().sha256`), and `repeated_bytes_new` (`Bytes::new`). Each loops `iterations` times over the host call with no storage, event, or arithmetic side-effects.
+
+### Figures (iterations = 1,000)
+
+| Host function | Local CPU | Network CPU | Delta | Local mem | Fixture | Build profile | Toolchain | Date |
+|---|---:|---:|---:|---:|---|---|---|---|
+| `ledger().sequence()` | 1,759,859 | 2,194,275 | −19.8% | 1,239,673 | `host-function-contract::repeated_sequence(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08-27 |
+| `ledger().timestamp()` | 3,861,391 | 4,379,869 | −11.8% | 1,239,673 | `host-function-contract::repeated_timestamp(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08-27 |
+| `Bytes::new` | 2,405,859 | 2,865,075 | −16.0% | 1,343,673 | `host-function-contract::repeated_bytes_new(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08-27 |
+| `crypto().sha256` | 7,488,773 | 8,042,983 | −6.9% | 1,391,800 | `host-function-contract::repeated_hash(1_000)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08-27 |
+
+Delta is `(local − network) / network`; a negative value means the local estimate *underestimates* the network cost. All four host functions are underestimated locally, by between **6.9%** and **19.8%**.
+
+**The gap varies by function.** The four measured host functions do not share a single gap. `ledger().sequence()` shows the largest underestimate (−19.8%), `crypto().sha256` the smallest (−6.9%). This confirms the assumption behind this measurement — that the CPU-instruction gap measured elsewhere does *not* transfer uniformly to host-function calls — is false. A single Tier A margin derived from one host function would not safely cover the others.
+
+The absolute figures differ from the earlier 2025-Q2 row in the CPU instructions section (1,280,000 local / 1,600,000 network for `repeated_sequence(1_000)`), which was produced under an older rustc/SDK combination. Under the current baseline (rustc 1.91.0, soroban-sdk 27, protocol 27 testnet) both figures are higher, but the sign of the gap is unchanged: local still underestimates network.
+
+### Gap stability across call counts
+
+The following measures `repeated_sequence` at several call counts to check whether the gap widens or narrows as the number of host calls grows. Raw CPU figures include the fixed module-instantiation cost present in both local and network estimates (`n = 0` baseline), so the per-call marginal cost is also reported: `(cost_n − cost_0) / n`.
+
+| n | Local CPU | Network CPU | Delta (raw) | Local per-call | Network per-call |
+|---|---:|---:|---:|---:|---:|
+| 0 (baseline) | 281,859 | 696,880 | — | — | — |
+| 100 | 429,659 | 843,180 | −49.0% | 1,478 | 1,463 |
+| 1,000 | 1,759,859 | 2,194,275 | −19.8% | 1,478 | 1,497 |
+| 5,000 | 7,671,859 | 8,280,355 | −7.3% | 1,478 | 1,517 |
+| 10,000 | 15,061,859 | 15,887,955 | −5.2% | 1,478 | 1,519 |
+
+**Conclusion.** The gap is **stable per host call, but the raw percentage is not constant** across call counts. The local per-call marginal cost is exactly constant at 1,478 CPU instructions for every measured count. The network per-call marginal cost is also essentially stable (~1,463–1,519), with a small drift upward as `n` grows that is consistent with cumulative metering granularity in the network estimate. The raw percentage delta shrinks as `n` grows only because the fixed module-instantiation baseline (696,880 CPU on network vs 281,859 locally) becomes a smaller fraction of the total — it is an artifact of the baseline, not a real change in per-call behavior.
+
+The practical implication: a Tier A margin for host-function-heavy workloads should be derived from the **per-call** marginal gap (roughly −0.2% to −2.7%: local ≈ network per call, slightly overestimating at small `n`, slightly underestimating at large `n`), not from the raw percentage, which depends on how many calls the fixture makes relative to the fixed baseline.
+
+### Reproduction
+
+To reproduce this measurement from a clean checkout:
+
+1. Build the WASM: `cargo build -p host-function-contract --target wasm32v1-none --release`
+2. Capture local figures: `cargo test -p host-function-contract --test measure_host_fn_gap -- --nocapture`. The `*_CPU` values in the output are the local estimates.
+3. Deploy the WASM to Soroban testnet: `stellar contract deploy --wasm target/wasm32v1-none/release/host_function_contract.wasm --source <funded-key> --network testnet`
+4. For each function and call count, build the invocation XDR with `stellar contract invoke --id <deployed-id> --source <funded-key> --network testnet --build-only -- <function> --iterations <n>`, POST it to the testnet RPC `simulateTransaction` method, and decode the `result.transactionData` base64 as `SorobanTransactionData` (via `stellar xdr dec --type SorobanTransactionData`). The `resources.instructions` field is the network CPU figure.
+5. Compute each delta = `(local − network) / network` and update the tables above. The full capture record is at [`cargo-budget-report/fixtures/host_function_benchmark.json`](cargo-budget-report/fixtures/host_function_benchmark.json).
+
 ## Unmeasured operation types
 
 The first three rows measure `do_expensive_work(10_000)`, which combines an arithmetic loop with a vector construction and instance-storage write. The fourth row uses `do_vm_instruction_work(10_000)`, an isolated version of the same wrapping arithmetic loop. It performs no storage access, event publication, or cross-contract invocation, so its measured gap represents the VM-instruction-heavy operation rather than an aggregate operation cost.
@@ -296,7 +356,7 @@ For the isolated VM benchmark, the delta is calculated as:
 | Operation type | Issue | Status |
 |---|---|---|
 | Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Measured in the existing mixed-operation fixtures |
-| Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
+| Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Measured in the [Host-function calls](#host-function-calls) section below |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Measured above |
 | Memory bytes | [#122](https://github.com/Tollcraft/soroban-budget-assert/issues/122) | In progress |
 | TTL extension | TBD | In progress — calibration test at `amm-pool-contract/tests/calibrate_extend_ttl.rs` |
