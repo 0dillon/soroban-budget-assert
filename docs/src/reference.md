@@ -921,20 +921,67 @@ Each simulated function produces four rows (or four JSON objects) when its simul
 
 Table output ends with a note that the values are simulated resource amounts rather than fees,
 what is not measured, and that testnet simulations vary slightly with ledger state — see
-[Measurement scope](#measurement-scope). JSON output (`--json`) is an array suited to CI:
+[Measurement scope](#measurement-scope). JSON output (`--json`) is an object with a schema
+version and a `snapshots` array suited to CI:
 
 ```json
-[
-  {
-    "package": "amm-pool-contract",
-    "function": "do_expensive_work",
-    "metric": "CPU Instructions",
-    "value": 756678
-  }
-]
+{
+  "schema_version": 1,
+  "snapshots": [
+    {
+      "package": "amm-pool-contract",
+      "function": "do_expensive_work",
+      "metric": "CPU Instructions",
+      "value": 756678
+    }
+  ]
+}
 ```
 
 When `--check --json` is used, configured functions gain `limit` and `pass` (see [the `--check` section above](#check-enforcing-regression-limits-against-network-verified-costs)); the shape for unconfigured functions is unchanged.
+
+### JSON schema version
+
+Every JSON document emitted by `cargo budget-report --json` includes a
+`schema_version` integer at the top level.  The current version is **1**.
+
+#### Versioning policy
+
+- The version is incremented when the JSON structure changes in a way
+  that requires consumers to update their parsing logic.  Adding a new
+  optional field to snapshot entries does **not** require a version bump;
+  removing or renaming a field, changing a field's type, or restructuring
+  the document **does**.
+- The `schema_version` field itself must always be present and must always
+  be an integer.
+- Consumers should read `schema_version` to decide which parsing branch
+  to use.  Unknown version numbers should be rejected with a clear error
+  rather than silently parsed.
+
+#### Breaking schema changes
+
+The following are considered breaking changes that require incrementing
+`schema_version`:
+
+- Removing, renaming, or changing the type of an existing field.
+- Changing the meaning of an existing field.
+- Moving snapshot entries out of the `snapshots` array.
+- Changing `schema_version` from an integer to another type.
+
+The following are **not** breaking and do **not** require a version bump:
+
+- Adding a new optional field to snapshot entries.
+- Adding a new top-level field alongside `schema_version` and `snapshots`.
+- Extending the set of possible `metric` values.
+
+#### Pre-version historical records
+
+Records produced before `schema_version` was introduced (i.e. records
+where the JSON is a bare array rather than a `{schema_version, snapshots}`
+object) are treated as **implicit version 0**.  The `record-history` CI
+job's measurement gate already accepts both forms — the bare array and
+the wrapped object — so existing historical data remains compatible
+without migration.
 
 ### HTML output (`--html`)
 
