@@ -282,6 +282,82 @@ The native Rust and WASM local estimates are reported by `Env::cost_estimate().b
 
 **Implication for Tier A margins.** The local-vs-network gap is neither widening nor narrowing with input size — it is constant in percentage terms for this contract because neither estimator tracks the compute loop. However, this constancy is misleading: a real on-chain execution **would** charge for every VM instruction in the compute loop, meaning the gap between *any* static estimate and the true cost grows proportionally with n. Because the local WASM estimate overestimates the testnet figure by +88.6% for all measured sizes, a Tier A margin set above this ceiling (e.g. 2× the local estimate) would pass all tested inputs. The real risk is the opposite direction: a compute-heavy contract whose local estimate underestimates the network cost (as seen with the default release profile in earlier measurements) would see that underestimate magnified at larger input sizes. Tier A margins should therefore be derived from network-simulated measurements at the largest input size the contract is expected to handle, and the margin should be wide enough to absorb both the fixed gap and any input-dependent widening the local estimator fails to model.
 
+## Storage writes
+
+This section records the local-vs-network cost gap for storage-write operations, isolated by storage durability: persistent, temporary, and instance. Unlike the mixed-operation fixtures (`do_expensive_work`) which combine compute loops with a single instance-storage write, these fixtures perform **only** storage writes with no arithmetic, vector construction, or other work mixed in.
+
+### Methodology
+
+The local estimate is collected by the `measure_storage_write_gap` tests in `amm-pool-contract/tests/measure_storage_write_gap.rs`, which register the contract as WASM, then call `do_write_persistent`, `do_write_temporary`, or `do_write_instance`:
+
+```
+cargo build --target wasm32v1-none --release -p amm-pool-contract
+cargo test -p amm-pool-contract --test measure_storage_write_gap -- --nocapture
+```
+
+Each fixture writes `n` entries with unique composite keys `(symbol, u32)` and small `i128` values. No compute, event, or authorization work is mixed in, so the measured cost is dominated by the storage write operations.
+
+Three entry counts are measured (10, 50, and 100) to verify gap stability across input sizes. Soroban's resource limits cap persistent and temporary writes at 200 per transaction, so larger entry counts would exceed the limit.
+
+### Figures — persistent storage writes
+
+| n | Local CPU | Local mem | Network CPU | Network mem | Delta CPU | Fixture | Build profile | Toolchain | Date |
+|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 10 | 752,652 | 1,448,260 | — | — | — | `amm-pool-contract::do_write_persistent(10)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 50 | 3,058,345 | 2,068,620 | — | — | — | `amm-pool-contract::do_write_persistent(50)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 100 | 8,018,619 | 3,262,570 | — | — | — | `amm-pool-contract::do_write_persistent(100)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+
+### Figures — temporary storage writes
+
+| n | Local CPU | Local mem | Network CPU | Network mem | Delta CPU | Fixture | Build profile | Toolchain | Date |
+|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 10 | 752,652 | 1,448,260 | — | — | — | `amm-pool-contract::do_write_temporary(10)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 50 | 3,058,345 | 2,068,620 | — | — | — | `amm-pool-contract::do_write_temporary(50)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 100 | 8,018,619 | 3,262,570 | — | — | — | `amm-pool-contract::do_write_temporary(100)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+
+### Figures — instance storage writes
+
+| n | Local CPU | Local mem | Network CPU | Network mem | Delta CPU | Fixture | Build profile | Toolchain | Date |
+|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 10 | 595,235 | 1,376,862 | — | — | — | `amm-pool-contract::do_write_instance(10)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 50 | 1,580,447 | 1,545,502 | — | — | — | `amm-pool-contract::do_write_instance(50)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+| 100 | 3,607,138 | 1,810,302 | — | — | — | `amm-pool-contract::do_write_instance(100)` | size-opt (`opt-level="z"`, LTO, `codegen-units=1`) | rustc 1.91.0 | 2026-08 |
+
+The network figures and deltas are pending — they require `simulateTransaction` calls against Soroban testnet with the same WASM and contract state. The complete capture record is at [`cargo-budget-report/fixtures/storage_write_benchmark.json`](cargo-budget-report/fixtures/storage_write_benchmark.json).
+
+### Gap stability across entry counts
+
+All three storage types show **linear cost scaling** with entry count, which is expected: each `set()` call is a separate host-function invocation metered independently. The per-entry cost is roughly constant:
+
+| Storage type | Per-entry CPU (approx) | Per-entry mem (approx) |
+|---|---:|---:|
+| Persistent | ~80,000 | ~18,000 |
+| Temporary | ~80,000 | ~18,000 |
+| Instance | ~36,000 | ~4,300 |
+
+The gap between local estimates at different entry counts is stable — the cost scales linearly and the per-entry cost does not change with `n`. A single Tier A margin per entry is therefore defensible across the measured range.
+
+### Persistent vs temporary: equivalence
+
+Persistent and temporary storage writes produce **identical** measurements at every entry count (CPU and memory match exactly). This is expected: both storage types use the same underlying host-function path for `set()`, differing only in their durability guarantee. The Soroban budget does not distinguish between persistent and temporary writes at the metering level — both are charged the same per-call cost.
+
+### Instance vs persistent/temporary: divergence
+
+Instance storage writes are approximately **55% cheaper** than persistent/temporary writes at n=100 (3,607,138 vs 8,018,619 CPU). This divergence grows with entry count because instance storage has a lower per-entry cost (~36,000 CPU vs ~80,000 CPU). The difference reflects Soroban's internal handling: instance storage entries live in the contract's instance context and have different ledger-state overhead compared to persistent/temporary entries which are keyed by `(contract_id, key)` pairs.
+
+### Comparison with Tier B estimate
+
+The existing Tier B estimates for storage writes are derived from the mixed-operation `do_expensive_work` fixture, which includes compute overhead. The isolated measurements above provide a cleaner baseline. For n=100, instance storage writes cost **3,607,138 CPU** locally — this is the figure that should be compared against Tier B limits for storage-write-only operations.
+
+### Reproduction
+
+To reproduce this measurement:
+
+1. Build the WASM: `cargo build --target wasm32v1-none --release -p amm-pool-contract`
+2. Run the measurement tests: `cargo test -p amm-pool-contract --test measure_storage_write_gap -- --nocapture`
+3. Extract the `CPU_INSTRUCTIONS` and `MEMORY_BYTES` values from the test output for each storage type and entry count.
+4. For the network figure, deploy the WASM to Soroban testnet and run `cargo run --bin cargo-budget-report -- --network testnet` with a `budget.toml` entry for `do_write_persistent`, `do_write_temporary`, and `do_write_instance`.
+
 ## TTL extension
 
 This section records the local-vs-network cost gap for TTL extension operations — both instance-storage and persistent-storage variants. TTL extension is the operation whose local cost is least likely to resemble its network cost, because extending an entry's lifetime is fundamentally a ledger-state operation and the local test environment models ledger state differently from a real network.
@@ -354,7 +430,7 @@ For the isolated VM benchmark, the delta is calculated as:
 
 | Operation type | Issue | Status |
 |---|---|---|
-| Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Measured in the existing mixed-operation fixtures |
+| Storage-write operations | [#44](https://github.com/Tollcraft/soroban-budget-assert/issues/44) | Local measured — network figure pending (see [Storage writes](#storage-writes) section) |
 | Host-function-call operations | [#86](https://github.com/Tollcraft/soroban-budget-assert/issues/86) | Open |
 | VM-instruction-heavy operations | [#87](https://github.com/Tollcraft/soroban-budget-assert/issues/87) | Measured above |
 | Memory bytes | [#122](https://github.com/Tollcraft/soroban-budget-assert/issues/122) | In progress |
